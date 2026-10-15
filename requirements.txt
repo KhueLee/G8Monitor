@@ -1,2 +1,6 @@
 starlette
 uvicorn
+# chỉ cần cho công cụ cập nhật bản đồ / tên điểm
+pillow
+numpy
+openpyxl

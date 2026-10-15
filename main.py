@@ -1,5 +1,6 @@
-"""G8 Monitor: nhận dữ liệu RCS/ICS đẩy lên (cảnh báo, trạng thái robot, trạng thái task), lưu log JSONL theo ngày,
-hiển thị trên web (tiếng Việt, dùng được trên điện thoại). Một tiến trình, một cổng. Chỉ cần: pip install starlette uvicorn
+"""G8 Monitor: nhận dữ liệu RCS/ICS đẩy lên (cảnh báo, trạng thái robot, trạng thái task), hỏi RCS định kỳ (đường đi robot,
+danh sách task, bản đồ) nếu khai rcs_api, lưu log JSONL theo ngày, hiển thị trên web (tiếng Việt, dùng được trên điện thoại).
+Chỉ cần: pip install starlette uvicorn
 """
 import asyncio
 import json
@@ -31,32 +32,81 @@ ROBOT_STATUS = {0: "Mất kết nối", 1: "Rảnh", 2: "LỖI", 3: "Khởi đ�
 TASK_STATUS = {3: "Đã hủy", 5: "Gửi lỗi", 6: "Đang chạy", 7: "Chạy lỗi", 8: "Hoàn thành", 9: "Đã giao xe", 10: "Chờ xác nhận",
                20: "Đang lấy hàng", 21: "Đã lấy hàng", 22: "Đang trả hàng", 23: "Đã trả hàng"}
 
-# ---------------------------------------------------------------- tra mã điểm (file highbay)
-BY_CODE, BY_LOC = {}, {}
-try:
-    for n in json.load(open(os.path.join(HERE, CFG.get("nodes_file", "nodes.json")), encoding="utf-8-sig")):
-        for k in (n["n"], n["r"]):
-            if k:
-                BY_CODE.setdefault(k, n)
-        for t in n["t"]:
-            BY_LOC[t.upper()] = n
-except Exception:
-    pass
-
-
-# ---------------------------------------------------------------- bản đồ + gợi ý lỗi
+# ---------------------------------------------------------------- tra mã điểm (file highbay) + bản đồ + gợi ý lỗi
+NODES_FILE = os.path.join(HERE, CFG.get("nodes_file", "nodes.json"))
 MAP_DIR = os.path.join(HERE, CFG.get("map_dir", "map"))
+BY_CODE, BY_LOC = {}, {}
 HINTS = {"codes": {}, "types": {}}
 POINTS, MAP = {}, None
+CELLS = []                       # [(x_mm, y_mm, nhãn ô, khu)] toạ độ các ô highbay (lấy từ topo qua points.json)
+LOADED = {}                      # file -> mtime lúc nạp, để tự nạp lại khi update_map.py / update_names.py ghi file mới
 try:
     HINTS = json.load(open(os.path.join(HERE, "hints.json"), encoding="utf-8-sig"))
 except Exception:
     pass
-try:
-    POINTS = json.load(open(os.path.join(MAP_DIR, "points.json"), encoding="utf-8"))
-    MAP = json.load(open(os.path.join(MAP_DIR, "map_meta.json"), encoding="utf-8"))
-except Exception:
-    pass
+
+
+def mtime(p):
+    try:
+        return os.path.getmtime(p)
+    except OSError:
+        return 0
+
+
+def load_nodes():
+    global BY_CODE, BY_LOC
+    by_code, by_loc = {}, {}
+    try:
+        for n in json.load(open(NODES_FILE, encoding="utf-8-sig")):
+            for k in (n["n"], n["r"]):
+                if k:
+                    by_code.setdefault(k, n)
+            for t in n["t"]:
+                by_loc[t.upper()] = n
+    except Exception:
+        return False
+    BY_CODE, BY_LOC = by_code, by_loc
+    LOADED["nodes"] = mtime(NODES_FILE)
+    return True
+
+
+def load_map():
+    global POINTS, MAP
+    try:
+        pts = json.load(open(os.path.join(MAP_DIR, "points.json"), encoding="utf-8"))
+        meta = json.load(open(os.path.join(MAP_DIR, "map_meta.json"), encoding="utf-8"))
+    except Exception:
+        return False
+    POINTS, MAP = pts, meta
+    LOADED["map"] = mtime(os.path.join(MAP_DIR, "map_meta.json"))
+    return True
+
+
+def build_cells():
+    global CELLS
+    cells = []
+    for n in {id(v): v for v in BY_CODE.values()}.values():
+        p = POINTS.get(n["r"]) or POINTS.get(n["n"])
+        if p and n["l"]:
+            cells.append((p[0], p[1], n["l"], n["k"]))
+    CELLS = cells
+
+
+def reload_if_changed():
+    """Gọi định kỳ: file bản đồ hoặc tên điểm đổi thì nạp lại, không cần restart."""
+    what = []
+    if mtime(NODES_FILE) != LOADED.get("nodes") and load_nodes():
+        what.append(f"tên điểm ({len(BY_CODE)} mã)")
+    if mtime(os.path.join(MAP_DIR, "map_meta.json")) != LOADED.get("map") and load_map():
+        what.append(f"bản đồ ({len(POINTS)} điểm)")
+    if what:
+        build_cells()
+    return what
+
+
+load_nodes()
+load_map()
+build_cells()
 
 
 def to_pixel(xy_mm):
@@ -75,13 +125,6 @@ def robot_xy(rec):
     if isinstance(xy, (list, tuple)) and len(xy) >= 2 and to_int(xy[0]) is not None and to_int(xy[1]) is not None:
         return [to_int(xy[0]), to_int(xy[1])]
     return POINTS.get(str(rec.get("pos") or ""))
-
-
-CELLS = []                       # [(x_mm, y_mm, nhãn ô, khu)] toạ độ các ô highbay (lấy từ topo qua points.json)
-for _n in {id(v): v for v in BY_CODE.values()}.values():
-    _p = POINTS.get(_n["r"]) or POINTS.get(_n["n"])
-    if _p and _n["l"]:
-        CELLS.append((_p[0], _p[1], _n["l"], _n["k"]))
 
 
 def nearest_cell(xy):
@@ -351,6 +394,133 @@ def handle_task(d):
                  f"{ev['error']} · Robot {ev['device'] or '?'} · Điểm {ev['point']} {ev['point_place']}".strip(" ·"), ev["device"])
 
 
+# ---------------------------------------------------------------- hỏi RCS định kỳ (getRobotTaskPath, getOrderList, topologyList)
+API = CFG.get("rcs_api") or {}
+API_ON = bool(API.get("base"))
+API_NAMES = {"path": "getRobotTaskPath (đường đi robot)", "order": "getOrderList (danh sách task)", "topology": "topologyList (bản đồ RCS)"}
+API_EVERY = {"path": float(API.get("path_sec", 5)), "order": float(API.get("order_sec", 30)), "topology": float(API.get("topology_min", 60)) * 60}
+API_ST = {k: {"ok": 0, "try": 0, "count": 0, "err": "", "fail": False} for k in API_NAMES}
+ORDER_STATUS = {1: "Chưa gửi", 2: "Đang hủy", 3: "Đã hủy", 4: "Đang gửi", 5: "Gửi lỗi", 6: "Đang chạy", 7: "Chạy lỗi", 8: "Hoàn thành", 9: "Đã giao xe"}
+ROUTES = {}                      # tên robot -> {"nodes": [[mã, x, y], ...], "ts", "area"}
+ORDERS = {"list": [], "ts": 0, "total": None}
+ORDER_SEEN = {}                  # orderId -> trạng thái đã ghi log (chỉ ghi khi đổi)
+TOPO_STATE = os.path.join(LOG_DIR, "topology_state.json")
+
+
+def parse_path_node(v):
+    """pathNodes: "mã QR,x,y,góc" (mm). Trả về [mã, x, y] hoặc None."""
+    parts = v if isinstance(v, (list, tuple)) else str(v).split(",")
+    if len(parts) < 3 or to_int(parts[1]) is None or to_int(parts[2]) is None:
+        return None
+    return [str(parts[0]).strip(), to_int(parts[1]), to_int(parts[2])]
+
+
+def on_paths(data):
+    now, seen = time.time(), set()
+    for area in (data or {}).get("areaInfo") or []:
+        for dev in area.get("devices") or []:
+            raw = str(dev.get("deviceNum") or dev.get("deviceCode") or "")
+            name = CFG.get("alias", {}).get(raw) or CFG.get("alias", {}).get(str(dev.get("deviceCode") or "")) or raw
+            nodes = [p for p in (parse_path_node(v) for v in dev.get("pathNodes") or []) if p]
+            seen.add(name)
+            prev = (ROUTES.get(name) or {}).get("nodes") or []
+            codes, pcodes = [n[0] for n in nodes], [n[0] for n in prev]
+            # robot đi tới đâu RCS bỏ bớt điểm đầu -> chỉ ghi log khi có đường mới (đích khác / đổi tuyến), không ghi mỗi lần rút ngắn
+            if codes and (not pcodes or codes != pcodes[len(pcodes) - len(codes):]):
+                write_log("path", {"time": now_s(now), "name": name, "code": str(dev.get("deviceCode") or ""), "area": area.get("areaId"),
+                                   "from": codes[0], "to": codes[-1], "to_place": place(codes[-1]), "count": len(codes), "nodes": dev.get("pathNodes"),
+                                   "lock_rects": len(dev.get("pathLockRects") or []), "reroute": bool(pcodes) and pcodes[-1] == codes[-1]})
+            ROUTES[name] = {"nodes": nodes, "ts": now, "area": area.get("areaId")}
+    for name in list(ROUTES):
+        if name not in seen:
+            ROUTES.pop(name)
+
+
+def on_orders(data):
+    data = data or {}
+    tasks = data.get("Tasks") or []
+    ORDERS.update(ts=time.time(), total=data.get("totalCount"), list=[{
+        "order": str(t.get("OrderId") or ""), "task_id": t.get("TaskId"), "number": str(t.get("OrderNumber") or ""), "status": to_int(t.get("OrderStatus")),
+        "status_name": ORDER_STATUS.get(to_int(t.get("OrderStatus")), str(t.get("OrderStatus"))), "template": str(t.get("TemplateCode") or ""),
+        "template_name": str(t.get("TemplateName") or ""), "path": str(t.get("OrderPath") or ""), "priority": to_int(t.get("Priority")),
+        "robot_type": str(t.get("RobotType") or ""), "created": str(t.get("createTime") or ""), "zone": t.get("ZoneId")} for t in tasks if isinstance(t, dict)])
+    for o in ORDERS["list"]:
+        if ORDER_SEEN.get(o["order"]) == o["status"]:
+            continue
+        first = o["order"] not in ORDER_SEEN
+        ORDER_SEEN[o["order"]] = o["status"]
+        write_log("order", {"time": now_s(), **o})
+        cb = TASKS.get(o["order"])                         # callback task-status đã báo lỗi này thì không báo trùng
+        if o["status"] in (5, 7) and not first and not (cb and cb.get("status") == o["status"]):
+            incident("task", "high", f"Task {o['status_name'].lower()}: {o['order']}", f"{o['template_name'] or o['template']} · đường {o['path']} (theo getOrderList)")
+    if len(ORDER_SEEN) > 5000:
+        for k in list(ORDER_SEEN)[:2000]:
+            ORDER_SEEN.pop(k, None)
+
+
+def on_topology(data):
+    """So mã băm file map RCS với lần trước: khác nghĩa là map RCS đã đổi -> nhắc cập nhật bản đồ tool."""
+    data = data or {}
+    digest = data.get("_hash", "")
+    try:
+        old = json.load(open(TOPO_STATE, encoding="utf-8"))
+    except Exception:
+        old = {}
+    rec = {"time": now_s(), "map_id": data.get("mapId"), "hash": digest, "zip_url": (data.get("mapZipUrl") or "").split("?")[0],
+           "json_url": (data.get("mapJsonUrl") or "").split("?")[0]}
+    if old.get("hash") != digest or old.get("map_id") != rec["map_id"]:
+        write_log("topology", {**rec, "changed": bool(old)})
+        os.makedirs(LOG_DIR, exist_ok=True)
+        json.dump(rec, open(TOPO_STATE, "w", encoding="utf-8"))
+        if old:
+            incident("system", "mid", "Map RCS đã thay đổi", f"mapId {rec['map_id']}. Cập nhật bản đồ tool: chạy update_map.py --rcs (hoặc update_map.py <file zip xuất từ RCS>).")
+
+
+def rcs_fetch(kind, body):
+    """Chạy trong luồng phụ (gọi mạng). topologyList chỉ trả URL nên tải luôn file map JSON để lấy mã băm."""
+    import hashlib
+    import rcs_api
+    data = rcs_api.call(API, kind, body)
+    if kind == "topology":
+        data = dict(data or {})
+        url = data.get("mapJsonUrl") or data.get("mapZipUrl") or ""
+        data["_hash"] = hashlib.sha1(rcs_api.download(url)).hexdigest() if url else ""
+    return data
+
+
+async def rcs_poller():
+    handlers = {"path": on_paths, "order": on_orders, "topology": on_topology}
+    bodies = {"path": {"areaId": int(API.get("area_id", 1))},
+              "order": {"areaId": int(API.get("area_id", 1)), "StartPage": "1", "pageSize": str(API.get("order_page_size", 50))},
+              "topology": {"areaId": int(API.get("area_id", 1))}}
+    while True:
+        for kind, st in API_ST.items():
+            if API_EVERY[kind] <= 0 or time.time() - st["try"] < API_EVERY[kind]:
+                continue
+            st["try"] = time.time()
+            try:
+                data = await asyncio.to_thread(rcs_fetch, kind, bodies[kind])
+                handlers[kind](data)
+                st.update(ok=time.time(), count=st["count"] + 1, err="")
+                if st["fail"]:
+                    st["fail"] = False
+                    incident("system", "low", f"Gọi được API RCS {API_NAMES[kind]} trở lại")
+            except Exception as e:
+                st["err"] = str(e)[:300]
+                if not st["fail"]:
+                    st["fail"] = True
+                    incident("system", "mid", f"Không gọi được API RCS {API_NAMES[kind]}", st["err"])
+        await asyncio.sleep(1)
+
+
+def route_view(name):
+    r = ROUTES.get(name)
+    if not r or not r["nodes"]:
+        return None
+    to = r["nodes"][-1][0]
+    return {"count": len(r["nodes"]), "to": to, "to_place": place(to), "px": [p for p in (to_pixel(n[1:]) for n in r["nodes"]) if p]}
+
+
 # ---------------------------------------------------------------- nhận callback từ RCS
 OK = {"code": 1000, "desc": "success"}
 
@@ -448,13 +618,14 @@ def robots_view():
         d = {**{k: v for k, v in r.items() if not k.startswith("_")}, "age": int(age), "lost": lost,
              "status_name": ROBOT_STATUS.get(r["status"], r["state"] or "?"), "place": robot_place(r), "path_text": r["path"]}
         d["map"] = to_pixel(robot_xy(r))
+        d["route"] = route_view(r["name"])
         d["preds"] = predict(d, now)
         out.append(d)
     for name in CFG.get("robots", []):          # robot khai trong config nhưng chưa có dữ liệu
         if name not in ROBOTS:
             out.append({"name": name, "status": None, "state": "", "battery": None, "pos": "", "xy": [], "order": "", "shelf": "", "path": "", "speed": None,
                         "payload": "", "code": "", "age": None, "lost": False, "unseen": True, "status_name": "Chưa có dữ liệu", "place": "", "path_text": "",
-                        "map": None, "preds": []})
+                        "map": None, "route": route_view(name), "preds": []})
     order = {n: i for i, n in enumerate(CFG.get("robots", []))}
     out.sort(key=lambda x: (0 if x["status"] == 2 else 1 if (x["lost"] or x["status"] == 0) else 3 if x.get("unseen") else 2, order.get(x["name"], 99), x["name"]))
     return out
@@ -487,7 +658,9 @@ async def api_incidents(request: Request):
 async def api_tasks(request: Request):
     ev = list(TASK_EVENTS)[-100:]
     ev.reverse()
-    return J({"events": ev, "now": now_s()})
+    act = [o for o in ORDERS["list"] if o["status"] not in (3, 8)]
+    return J({"events": ev, "now": now_s(), "orders": {"on": API_ON and API_EVERY["order"] > 0, "ts": now_s(ORDERS["ts"]) if ORDERS["ts"] else "",
+                                                       "total": ORDERS["total"], "active": act, "shown": len(ORDERS["list"]), "err": API_ST["order"]["err"]}})
 
 
 async def api_system(request: Request):
@@ -501,13 +674,17 @@ async def api_system(request: Request):
             if os.path.isdir(p):
                 days.append({"date": name, "files": [{"name": f, "kb": round(os.path.getsize(os.path.join(p, f)) / 1024, 1)} for f in sorted(os.listdir(p))]})
     return J({"uptime": int(now - START), "channels": chans, "paths": CFG["paths"], "rcs_url": CFG.get("public_host", "") + ":" + str(CFG["listen"]["port_rcs"]), "web_url": CFG.get("public_host", "") + ":" + str(CFG["listen"]["port_web"]), "retention_days": CFG["retention_days"], "days": days,
-              "log_raw": CFG.get("log_raw"), "nodes": len(BY_CODE), "now": now_s()})
+              "log_raw": CFG.get("log_raw"), "nodes": len(BY_CODE), "now": now_s(),
+              "map": {"points": len(POINTS), "built": (MAP or {}).get("built", ""), "source": (MAP or {}).get("source", "")},
+              "api": {"on": API_ON, "base": API.get("base", ""), "area_id": API.get("area_id"),
+                      "items": {k: {"name": API_NAMES[k], "every": API_EVERY[k], "count": st["count"], "err": st["err"], "fail": st["fail"],
+                                    "ago": int(now - st["ok"]) if st["ok"] else None, "last": now_s(st["ok"]) if st["ok"] else ""} for k, st in API_ST.items()}}})
 
 
 async def api_history(request: Request):
     q = request.query_params
     date, kind = q.get("date") or day(), q.get("kind") or "incident"
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) or kind not in ("alarm", "agv", "task", "incident", "raw"):
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) or kind not in ("alarm", "agv", "task", "incident", "raw", "path", "order", "topology"):
         return J({"error": "tham số không hợp lệ"}, 400)
     rows = read_lines(os.path.join(LOG_DIR, date, kind + ".jsonl"), 2000)
     s = (q.get("q") or "").strip().lower()
@@ -560,6 +737,9 @@ async def watchdog():
         if c["last"] and now - c["last"] > float(CFG.get("silence_warn_sec", 120)) and not FLAGS["silent"]:
             FLAGS["silent"] = True
             incident("system", "high", "RCS ngừng gửi dữ liệu trạng thái robot", f"Lần cuối {now_s(c['last'])}. Kiểm tra mạng/RCS hoặc tool này.")
+        what = reload_if_changed()
+        if what:
+            incident("system", "low", "Đã nạp lại " + " và ".join(what), (f"Bản đồ: {MAP.get('source')}" if MAP and MAP.get("source") and "bản đồ" in what[-1] else ""))
         if now - last_clean > 3600:
             last_clean = now
             cleanup_logs()
@@ -575,6 +755,9 @@ def restore_today():
         if "ts" in r:
             TASK_EVENTS.append(r)
             TASKS[r.get("order", "")] = r
+    for r in read_lines(os.path.join(d, "order.jsonl"), 2000):
+        if r.get("order"):
+            ORDER_SEEN[r["order"]] = r.get("status")
 
 
 @asynccontextmanager
@@ -582,9 +765,13 @@ async def lifespan(app):
     cleanup_logs()
     restore_today()
     incident("system", "low", "G8 Monitor khởi động", f"Đang chờ dữ liệu từ RCS tại {', '.join(CFG['paths'].values())}")
-    t = asyncio.create_task(watchdog())
+    tasks = [asyncio.create_task(watchdog())]
+    if API_ON:
+        tasks.append(asyncio.create_task(rcs_poller()))
+        incident("system", "low", "Bật hỏi RCS định kỳ", f"{API['base']} · area {API.get('area_id')} · " + ", ".join(f"{k} mỗi {int(v)} giây" for k, v in API_EVERY.items() if v > 0))
     yield
-    t.cancel()
+    for t in tasks:
+        t.cancel()
 
 
 rcs_routes = []

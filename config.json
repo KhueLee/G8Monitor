@@ -46,5 +46,19 @@
   "charge_stall_min": 30,
   "task_fail_minutes": 30,
   "_map_note": "Toạ độ robot RCS gửi (devicePostionRec) đang giả định là mm cùng hệ với bản đồ. Nếu robot hiện lệch đều một khoảng so với đường đi, chỉnh xy_offset_mm.",
-  "public_host": "http://192.168.110.189"
+  "public_host": "http://192.168.110.189",
+  "map_model": "RTA-C060",
+  "_map_model_note": "update_map.py dùng map của loại xe này khi file map RCS có nhiều loại (RTA-C060, RTA-C100, RTA-FD200...).",
+  "rcs_api": {
+    "base": "",
+    "area_id": 1,
+    "user": "",
+    "password": "",
+    "path_sec": 5,
+    "order_sec": 30,
+    "order_page_size": 50,
+    "topology_min": 60,
+    "timeout_sec": 8
+  },
+  "_rcs_api_note": "Tool tự hỏi RCS: getRobotTaskPath (đường đi, mỗi path_sec giây), getOrderList (task, mỗi order_sec giây), topologyList (map, mỗi topology_min phút). base = http://<IP máy RCS>:7000, để trống là tắt. area_id = Area ID trên RCS. user/password chỉ cần khi RCS bật xác thực WSSE. Đặt 0 để tắt từng loại."
 }
