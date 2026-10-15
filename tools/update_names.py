@@ -13,7 +13,10 @@ import sys
 from collections import Counter
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # thư mục gốc project
-CFG = json.load(open(os.path.join(ROOT, "config.json"), encoding="utf-8-sig"))
+CFG_PATH = os.path.join(ROOT, "config.json")
+if not os.path.exists(CFG_PATH):                                     # máy mới clone: tạo config.json từ mẫu
+    shutil.copy(os.path.join(ROOT, "config.example.json"), CFG_PATH)
+CFG = json.load(open(CFG_PATH, encoding="utf-8-sig"))
 OUT = os.path.join(ROOT, CFG.get("nodes_file", "data/nodes.json"))
 COLS = {"k": "khu", "d": "dãy", "n": "node", "r": "tên rcs"}           # khóa trong nodes.json -> đầu cột Excel (khớp phần đầu, không phân biệt hoa thường)
 LEVELS = ["tầng 1", "tầng 2", "tầng 3", "tầng 4"]

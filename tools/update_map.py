@@ -16,7 +16,10 @@ import time
 import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # thư mục gốc project
-CFG = json.load(open(os.path.join(ROOT, "config.json"), encoding="utf-8-sig"))
+CFG_PATH = os.path.join(ROOT, "config.json")
+if not os.path.exists(CFG_PATH):                                     # máy mới clone: tạo config.json từ mẫu
+    shutil.copy(os.path.join(ROOT, "config.example.json"), CFG_PATH)
+CFG = json.load(open(CFG_PATH, encoding="utf-8-sig"))
 MAP_DIR = os.path.join(ROOT, CFG.get("map_dir", "data/map"))
 KEEP_BACKUPS = 5
 

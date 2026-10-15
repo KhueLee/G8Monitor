@@ -19,7 +19,10 @@ from starlette.routing import Route
 
 HERE = os.path.dirname(os.path.abspath(__file__))                    # src/
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # thư mục gốc project
-CFG = json.load(open(os.environ.get("MON_CONFIG") or os.path.join(ROOT, "config.json"), encoding="utf-8-sig"))
+CFG_PATH = os.environ.get("MON_CONFIG") or os.path.join(ROOT, "config.json")
+if not os.path.exists(CFG_PATH):                                     # máy mới clone: tạo config.json từ mẫu
+    shutil.copy(os.path.join(ROOT, "config.example.json"), CFG_PATH)
+CFG = json.load(open(CFG_PATH, encoding="utf-8-sig"))
 LOG_DIR = CFG["log_dir"] if os.path.isabs(CFG["log_dir"]) else os.path.join(ROOT, CFG["log_dir"])
 START = time.time()
 

@@ -6,3 +6,4 @@ __pycache__/
 venv/
 data/map/backup/
 data/nodes.json.bak
+config.json

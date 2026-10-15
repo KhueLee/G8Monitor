@@ -17,9 +17,10 @@ RCS/ICS **tự đẩy** dữ liệu lên tool này (trạng thái robot, cảnh 
 5. Cài Python 3 (https://www.python.org/downloads/, tích **Add python.exe to PATH** khi cài) rồi làm tiếp phần **Cài và chạy** bên dưới.
 
 **Cập nhật bản mới**: tắt tool (đóng cửa sổ `start.bat`), rồi trong thư mục tool chạy `git pull`, sau đó chạy lại `start.bat`.
-- Nếu đã sửa `config.json` (alias, rcs_api...) trên máy client, `git pull` có thể báo lỗi xung đột. Cách xử lý: `git stash` → `git pull` → `git stash pop` (giữ lại cấu hình đã sửa). Nếu vẫn xung đột thì mở `config.json` sửa lại tay.
-- Xem đã sửa gì trên máy: `git status`, `git diff`. Bỏ hết thay đổi trên máy, về đúng bản trên GitHub: `git checkout -- .` (cẩn thận, mất cấu hình đã sửa).
-- Thư mục `logs` không đưa lên git nên `git pull` không ảnh hưởng log.
+- `config.json` là cấu hình riêng của từng máy, **không đưa lên git**, nên `git pull` không ghi đè. Trên git chỉ có file mẫu `config.example.json`. Lần đầu chạy, tool tự chép mẫu thành `config.json`, sau đó sửa `config.json` theo máy. Khi bản mới có thêm khóa cấu hình, so `config.example.json` với `config.json` rồi chép khóa mới sang.
+- **Máy đã clone trước khi tách `config.example.json`**: trước khi pull, sao lưu cấu hình: `copy config.json config.local.json`, rồi `git pull` (git sẽ xoá `config.json` cũ; nếu báo lỗi vì file đã sửa thì chạy `git checkout -- config.json` rồi `git pull` lại), sau đó `move /y config.local.json config.json`.
+- Xem đã sửa gì trên máy: `git status`, `git diff`. Bỏ hết thay đổi trên máy, về đúng bản trên GitHub: `git checkout -- .` (không ảnh hưởng `config.json`).
+- Thư mục `logs` cũng không đưa lên git nên `git pull` không ảnh hưởng log.
 
 ## Cài và chạy
 1. `pip install -r requirements.txt` (chạy tool chỉ cần `starlette uvicorn`; `pillow numpy openpyxl` dùng cho công cụ cập nhật bản đồ/tên điểm)
@@ -98,6 +99,7 @@ Robot báo Fault / hết lỗi · offline / online lại · pin dưới `battery
 `logs\YYYY-MM-DD\` gồm `incident.jsonl`, `alarm.jsonl`, `task.jsonl`, `agv.jsonl` (ghi khi đổi trạng thái/task/pin hoặc mỗi `agv_log_interval_sec`), `path.jsonl` (đường đi mới, getRobotTaskPath), `order.jsonl` (task đổi trạng thái, getOrderList), `topology.jsonl` (map RCS đổi), `raw.jsonl` (dữ liệu không đọc được; bật `log_raw` để lưu mọi bản tin). Giữ `retention_days` ngày (30), tự xóa cũ. Mỗi dòng là một JSON, mở bằng Excel/Notepad được.
 
 ## config.json
+Cấu hình riêng của máy, không đưa lên git (tự tạo từ `config.example.json` khi chạy lần đầu). Muốn đổi giá trị mặc định cho mọi máy thì sửa `config.example.json` rồi commit.
 - `alias`: tên RCS (`deviceName`, ví dụ `0001`) → tên hiển thị (`LT01`). **Cần sửa theo robot thật.**
 - `alarm_active_minutes`: cảnh báo coi là "đang xảy ra" nếu mới báo trong số phút này và chưa có `alarmStatus=1`.
 - `nodes_file` (`data/nodes.json`): bảng điểm highbay (cùng file với ManualControl2) để dịch mã điểm ra tên ô. Tạo bằng `update_names.py`.
@@ -112,7 +114,8 @@ Robot báo Fault / hết lỗi · offline / online lại · pin dưới `battery
 | Thư mục / file | Nội dung |
 |---|---|
 | `start.bat` | Chạy tool (bấm đúp) |
-| `config.json` | Cấu hình (alias robot, rcs_api, ngưỡng cảnh báo...) |
+| `config.example.json` | Cấu hình mẫu (đưa lên git) |
+| `config.json` | Cấu hình của máy (alias robot, rcs_api, ngưỡng cảnh báo...), tự tạo từ mẫu, không đưa lên git |
 | `src` | Tool chính: `main.py` (nhận dữ liệu, hỏi RCS, web), `rcs_api.py` (gọi API RCS, xác thực WSSE), `index.html` (giao diện) |
 | `tools` | Công cụ phụ: `update_map.bat/.py` (cập nhật bản đồ), `build_map.py` (dựng ảnh bản đồ, update_map gọi), `update_names.bat/.py` (cập nhật tên điểm từ Excel), `simulate.py` (gửi dữ liệu giả), `firewall_open.bat` (mở cổng) |
 | `data` | Dữ liệu tool đang dùng: `nodes.json` (tên ô highbay), `hints.json` (bảng mã lỗi + cách xử lý), `map` (`map.png`, `points.json`, `map_meta.json`, `backup`) |
