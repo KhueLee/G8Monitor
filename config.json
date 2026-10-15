@@ -1,0 +1,50 @@
+{
+  "_note": "Cổng 5502: RCS đẩy dữ liệu vào (khai trong RCS). Cổng 5503: xem giao diện web. Khai trong RCS: http://192.168.110.189:5502/ics/alarm , /ics/agv-status , /ics/task-status",
+  "listen": {
+    "host": "0.0.0.0",
+    "port_rcs": 5502,
+    "port_web": 5503
+  },
+  "paths": {
+    "alarm": "/ics/alarm",
+    "agv": "/ics/agv-status",
+    "task": "/ics/task-status"
+  },
+  "log_dir": "logs",
+  "retention_days": 30,
+  "log_raw": false,
+  "agv_log_interval_sec": 30,
+  "robot_stale_sec": 60,
+  "silence_warn_sec": 120,
+  "battery_low": 20,
+  "alarm_active_minutes": 10,
+  "alarm_dedup_sec": 300,
+  "nodes_file": "nodes.json",
+  "alias": {
+    "0001": "LT01",
+    "0002": "LT02",
+    "0003": "LT03",
+    "0004": "LT04",
+    "0005": "LT05"
+  },
+  "_alias_note": "alias: deviceName/deviceCode RCS gửi -> tên hiển thị. Nếu RCS đã gửi sẵn LT01..LT05, FK02 thì để trống. Robot khai ở 'robots' luôn hiện trên giao diện, kể cả khi chưa có dữ liệu. FK02: thêm vào alias tên RCS thật của nó.",
+  "robots": [
+    "LT01",
+    "LT02",
+    "LT03",
+    "LT04",
+    "LT05",
+    "FK02"
+  ],
+  "map_dir": "map",
+  "xy_offset_mm": [
+    0,
+    0
+  ],
+  "stuck_sec": 180,
+  "stuck_move_mm": 500,
+  "charge_stall_min": 30,
+  "task_fail_minutes": 30,
+  "_map_note": "Toạ độ robot RCS gửi (devicePostionRec) đang giả định là mm cùng hệ với bản đồ. Nếu robot hiện lệch đều một khoảng so với đường đi, chỉnh xy_offset_mm.",
+  "public_host": "http://192.168.110.189"
+}

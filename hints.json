@@ -1,0 +1,109 @@
+{
+ "codes": {
+  "8011": [
+   "Góc đích không đạt",
+   "Tiếp tuyến cung lệch hoặc node không cho quay. Báo kỹ thuật map."
+  ],
+  "8018": [
+   "Không tới được điểm đích (đường chỉ có edge của loại robot khác)",
+   "Báo kỹ thuật kiểm tra map/loại robot của edge."
+  ],
+  "8040": [
+   "Không tới được điểm đích",
+   "Báo kỹ thuật kiểm tra loại robot trên edge."
+  ],
+  "8023": [
+   "Đường bị robot khác chặn",
+   "Chờ hoặc dời robot đang chắn. Thường tự hết."
+  ],
+  "8024": [
+   "Đường bị kệ chặn",
+   "Kiểm tra kệ đặt sai vị trí/góc, đưa kệ về đúng ô."
+  ],
+  "8025": [
+   "Yêu cầu xoay kệ không thực hiện được",
+   "Không có node xoay kệ hợp lệ trên đường. Báo kỹ thuật map."
+  ],
+  "8039": [
+   "Điểm xuất phát không đủ điều kiện đi qua (khi mang tải)",
+   "Điểm chỉ có đường của loại robot khác hoặc bị khóa góc. Đưa xe về điểm khác trong mạng chính, báo kỹ thuật map."
+  ],
+  "8060": [
+   "Hành động bị robot khác chặn",
+   "Dời robot đang chắn."
+  ],
+  "8081": [
+   "Góc kệ không khớp hướng ô",
+   "Kệ đặt sai hướng. Xoay/đặt lại kệ cho đúng."
+  ],
+  "8360": [
+   "Góc kệ không khớp hướng ô",
+   "Kệ đặt sai hướng. Xoay/đặt lại kệ cho đúng."
+  ],
+  "8098": [
+   "Vùng cấm động",
+   "Kiểm tra vùng cấm đã bật trên RCS."
+  ],
+  "8099": [
+   "Đường đi qua vùng cấm động",
+   "Kiểm tra vùng cấm, đưa robot ra khỏi vùng."
+  ],
+  "8212": [
+   "Giới hạn hướng hoặc bề rộng tại điểm xuất phát",
+   "Báo kỹ thuật map (model/bề rộng của điểm)."
+  ],
+  "8218": [
+   "Robot nằm ngoài bản đồ",
+   "Đưa robot về trong vùng bản đồ rồi định vị lại."
+  ],
+  "8235": [
+   "Không lập được đường (bề rộng hoặc góc không đủ)",
+   "Báo kỹ thuật kiểm tra bề rộng đường/góc tại điểm."
+  ],
+  "8337": [
+   "Góc tải lệch góc xe",
+   "Báo kỹ thuật: khóa góc model 100 ở điểm prepare."
+  ],
+  "8342": [
+   "Lệch tuyến, không lập được đường",
+   "Báo kỹ thuật: cung sai hướng hoặc edge còn mặc định."
+  ],
+  "25216": [
+   "Xe nâng không nhận diện được pallet",
+   "Kiểm tra pallet/mã QR, camera xe nâng. Báo hãng nếu lặp lại."
+  ],
+  "25222": [
+   "Xe nâng đọc mã QR pallet lỗi",
+   "Kiểm tra pallet/mã QR, camera xe nâng. Báo hãng nếu lặp lại."
+  ],
+  "25131": [
+   "Kích thước/loại pallet không khớp",
+   "Kiểm tra pallet đúng loại. Báo hãng nếu lặp lại."
+  ],
+  "12803": [
+   "Lỗi camera nhận diện pallet",
+   "Kiểm tra/lau camera, khởi động lại xe nâng. Báo hãng nếu lặp lại."
+  ],
+  "12820": [
+   "Đường đi bị vật cản chặn (FreePathObstacleInPath)",
+   "Dọn vật cản/kệ/xe khác trên đường; robot tự lập lại đường khi hết chắn"
+  ]
+ },
+ "types": {
+  "1": "Mất kết nối: kiểm tra Wi-Fi/nguồn, khởi động lại thiết bị. Ngoài ca có thể do tắt máy.",
+  "2": "Thiết bị hỏng: kiểm tra trực tiếp tại xe.",
+  "3": "Pin yếu: đưa robot đi sạc.",
+  "4": "Robot báo lỗi cơ cấu (di chuyển/xoay/nâng/quá tải): ra kiểm tra cơ khí tại xe.",
+  "8": "Lỗi dẫn đường: kiểm tra vị trí xe so với bản đồ, định vị lại.",
+  "11": "Cập nhật bản đồ lỗi: đồng bộ lại map cho robot.",
+  "12": "Có vật cản: ra kiểm tra và dọn vật cản/người đứng chắn trên đường.",
+  "20": "Cọc sạc lỗi: kiểm tra trạm sạc.",
+  "21": "Sạc lỗi: kiểm tra tiếp điểm sạc và trạm sạc.",
+  "22": "Kệ bất thường (lệch, không thấy mã kệ, kệ chắn đường): ra kiểm tra kệ.",
+  "23": "Đường đi bất thường (robot/kệ chắn, hoặc không lập được đường): xem mã lỗi trong mô tả.",
+  "25": "Tải bất thường: kiểm tra hàng/kệ trên xe.",
+  "28": "Va chạm: dừng xe, kiểm tra hiện trường, có thể do đẩy tay.",
+  "45": "Đang chờ người xác nhận trên RCS.",
+  "50": "Lỗi nhận diện (pallet/QR): kiểm tra pallet, camera xe nâng."
+ }
+}

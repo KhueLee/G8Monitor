@@ -1,0 +1,618 @@
+"""G8 Monitor: nhận dữ liệu RCS/ICS đẩy lên (cảnh báo, trạng thái robot, trạng thái task), lưu log JSONL theo ngày,
+hiển thị trên web (tiếng Việt, dùng được trên điện thoại). Một tiến trình, một cổng. Chỉ cần: pip install starlette uvicorn
+"""
+import asyncio
+import json
+import os
+import re
+import shutil
+import time
+from collections import deque
+from contextlib import asynccontextmanager
+
+import uvicorn
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import FileResponse, JSONResponse
+from starlette.routing import Route
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+CFG = json.load(open(os.environ.get("MON_CONFIG") or os.path.join(HERE, "config.json"), encoding="utf-8-sig"))
+LOG_DIR = CFG["log_dir"] if os.path.isabs(CFG["log_dir"]) else os.path.join(HERE, CFG["log_dir"])
+START = time.time()
+
+ALARM_TYPES = {1: "Robot mất kết nối", 2: "Thiết bị hỏng", 3: "Pin yếu", 4: "AMR lỗi", 5: "Nâng cấp lỗi", 6: "Node lỗi", 8: "Lỗi dẫn đường",
+               11: "Cập nhật bản đồ lỗi", 12: "Có vật cản", 15: "Nhiệt độ cao", 20: "Cọc sạc lỗi", 21: "Sạc lỗi", 22: "Kệ bất thường",
+               23: "Đường đi bất thường", 24: "Lỗi cấu hình", 25: "Tải bất thường", 26: "Bin bất thường", 28: "Va chạm", 29: "Laser lỗi",
+               30: "Hàng quá cao", 31: "Lỗi thay thiết bị", 40: "RFID lỗi", 41: "Cửa tự động lỗi", 42: "Thang máy lỗi", 43: "Cảm biến bin lỗi",
+               44: "Camera lỗi", 45: "Chờ xác nhận", 46: "Dịch vụ lỗi", 48: "Pager lỗi", 49: "Đèn báo lỗi", 50: "Nhận diện lỗi"}
+GRADE = {0: "Thấp", 1: "Vừa", 2: "Cao"}
+ROBOT_STATUS = {0: "Mất kết nối", 1: "Rảnh", 2: "LỖI", 3: "Khởi động", 4: "Đang chạy task", 5: "Đang sạc", 7: "Đang nâng cấp"}
+TASK_STATUS = {3: "Đã hủy", 5: "Gửi lỗi", 6: "Đang chạy", 7: "Chạy lỗi", 8: "Hoàn thành", 9: "Đã giao xe", 10: "Chờ xác nhận",
+               20: "Đang lấy hàng", 21: "Đã lấy hàng", 22: "Đang trả hàng", 23: "Đã trả hàng"}
+
+# ---------------------------------------------------------------- tra mã điểm (file highbay)
+BY_CODE, BY_LOC = {}, {}
+try:
+    for n in json.load(open(os.path.join(HERE, CFG.get("nodes_file", "nodes.json")), encoding="utf-8-sig")):
+        for k in (n["n"], n["r"]):
+            if k:
+                BY_CODE.setdefault(k, n)
+        for t in n["t"]:
+            BY_LOC[t.upper()] = n
+except Exception:
+    pass
+
+
+# ---------------------------------------------------------------- bản đồ + gợi ý lỗi
+MAP_DIR = os.path.join(HERE, CFG.get("map_dir", "map"))
+HINTS = {"codes": {}, "types": {}}
+POINTS, MAP = {}, None
+try:
+    HINTS = json.load(open(os.path.join(HERE, "hints.json"), encoding="utf-8-sig"))
+except Exception:
+    pass
+try:
+    POINTS = json.load(open(os.path.join(MAP_DIR, "points.json"), encoding="utf-8"))
+    MAP = json.load(open(os.path.join(MAP_DIR, "map_meta.json"), encoding="utf-8"))
+except Exception:
+    pass
+
+
+def to_pixel(xy_mm):
+    """Toạ độ mm của RCS -> pixel trên ảnh bản đồ. Không có bản đồ/toạ độ thì trả None."""
+    if not MAP or not xy_mm:
+        return None
+    ox, oy = CFG.get("xy_offset_mm", [0, 0])
+    x = (float(xy_mm[0]) + ox) / 1000.0
+    y = (float(xy_mm[1]) + oy) / 1000.0
+    return [round((x - MAP["origin_x"]) / MAP["m_per_px"], 1), round(MAP["h"] - (y - MAP["origin_y"]) / MAP["m_per_px"], 1)]
+
+
+def robot_xy(rec):
+    """Ưu tiên toạ độ RCS gửi; không có thì lấy toạ độ của node (devicePosition)."""
+    xy = rec.get("xy")
+    if isinstance(xy, (list, tuple)) and len(xy) >= 2 and to_int(xy[0]) is not None and to_int(xy[1]) is not None:
+        return [to_int(xy[0]), to_int(xy[1])]
+    return POINTS.get(str(rec.get("pos") or ""))
+
+
+CELLS = []                       # [(x_mm, y_mm, nhãn ô, khu)] toạ độ các ô highbay (lấy từ topo qua points.json)
+for _n in {id(v): v for v in BY_CODE.values()}.values():
+    _p = POINTS.get(_n["r"]) or POINTS.get(_n["n"])
+    if _p and _n["l"]:
+        CELLS.append((_p[0], _p[1], _n["l"], _n["k"]))
+
+
+def nearest_cell(xy):
+    """Ô highbay gần nhất (dạng D36-16) với toạ độ mm. Trả về (nhãn, khu, khoảng cách m) hoặc None."""
+    if not xy or not CELLS:
+        return None
+    best = min(CELLS, key=lambda c: (c[0] - xy[0]) ** 2 + (c[1] - xy[1]) ** 2)
+    return best[2], best[3], ((best[0] - xy[0]) ** 2 + (best[1] - xy[1]) ** 2) ** 0.5 / 1000.0
+
+
+def robot_place(rec):
+    """Mô tả vị trí robot theo ô gần nhất mà người vận hành nhớ. Không có toạ độ thì dùng mã điểm."""
+    n = nearest_cell(robot_xy(rec))
+    if n:
+        return f"Gần {n[0]} ({n[1]})" + (f", cách {n[2]:.0f} m" if n[2] >= 3 else "")
+    return place(rec.get("pos")) or str(rec.get("pos") or "")
+
+
+def place(code):
+    code = str(code or "").strip()
+    n = BY_CODE.get(code) or BY_LOC.get(code.upper())
+    return f"{n['l']} ({n['k']})" if n else ""
+
+
+# ---------------------------------------------------------------- log theo ngày
+def day():
+    return time.strftime("%Y-%m-%d")
+
+
+def now_s(ts=None):
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts or time.time()))
+
+
+def write_log(kind, rec):
+    d = os.path.join(LOG_DIR, day())
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, kind + ".jsonl"), "a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def read_lines(path, limit):
+    """Đọc tối đa `limit` dòng cuối của file JSONL."""
+    if not os.path.exists(path):
+        return []
+    out = deque(maxlen=limit)
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    out.append(json.loads(line))
+                except ValueError:
+                    out.append({"_bad": line[:200]})
+    return list(out)
+
+
+def cleanup_logs():
+    keep = int(CFG.get("retention_days", 30))
+    if not os.path.isdir(LOG_DIR):
+        return
+    limit = time.time() - keep * 86400
+    for name in os.listdir(LOG_DIR):
+        p = os.path.join(LOG_DIR, name)
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", name) and os.path.isdir(p):
+            try:
+                if time.mktime(time.strptime(name, "%Y-%m-%d")) < limit:
+                    shutil.rmtree(p, ignore_errors=True)
+            except ValueError:
+                pass
+
+
+# ---------------------------------------------------------------- trạng thái trong bộ nhớ
+ROBOTS = {}                      # key -> bản ghi mới nhất
+ALARMS = {}                      # key -> {first,last,count,...}
+TASK_EVENTS = deque(maxlen=400)
+TASKS = {}                       # orderId -> sự kiện mới nhất
+INCIDENTS = deque(maxlen=600)
+CHAN = {k: {"last": 0, "count": 0, "today": 0, "day": day()} for k in ("alarm", "agv", "task")}
+FLAGS = {"silent": False}
+
+
+def clean(obj):
+    """Bỏ khoảng trắng thừa ở tên trường và giá trị (RCS thật hay gửi "deviceName " ...)."""
+    if isinstance(obj, dict):
+        return {str(k).strip(): clean(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [clean(v) for v in obj]
+    return obj.strip() if isinstance(obj, str) else obj
+
+
+def to_int(v, default=None):
+    try:
+        return int(float(str(v).strip()))
+    except (TypeError, ValueError):
+        return default
+
+
+def incident(kind, level, title, detail="", device="", ts=None, persist=True):
+    rec = {"ts": ts or time.time(), "time": now_s(ts), "kind": kind, "level": level, "title": title, "detail": detail, "device": device}
+    INCIDENTS.append(rec)
+    if persist:
+        write_log("incident", rec)
+
+
+def mark(ch):
+    c = CHAN[ch]
+    if c["day"] != day():
+        c["day"], c["today"] = day(), 0
+    c["last"], c["count"], c["today"] = time.time(), c["count"] + 1, c["today"] + 1
+    if ch == "agv" and FLAGS["silent"]:
+        FLAGS["silent"] = False
+        incident("system", "low", "RCS gửi dữ liệu robot trở lại")
+
+
+def robot_name(d):
+    raw = str(d.get("deviceName") or d.get("deviceNum") or d.get("deviceCode") or "?")
+    return CFG.get("alias", {}).get(raw) or CFG.get("alias", {}).get(str(d.get("deviceCode") or "")) or raw
+
+
+def handle_agv(items):
+    mark("agv")
+    now = time.time()
+    for d in items:
+        if not isinstance(d, dict):
+            continue
+        name = robot_name(d)
+        status = to_int(d.get("deviceStatus"))
+        state = str(d.get("state") or "")
+        batt = to_int(d.get("battery"))
+        pos = str(d.get("devicePosition") or "")
+        xy = d.get("devicePostionRec") or d.get("devicePositionRec") or []
+        rec = {"name": name, "code": str(d.get("deviceCode") or ""), "status": status, "state": state, "battery": batt, "pos": pos,
+               "xy": xy, "order": str(d.get("orderId") or ""), "shelf": str(d.get("shelfNumber") or d.get("shelfNum") or ""),
+               "path": str(d.get("taskPath") or ""), "speed": to_int(d.get("speed")), "payload": str(d.get("payLoad") or ""), "ts": now}
+        prev = ROBOTS.get(name)
+        cur = robot_xy(rec)
+        rec["moved_ts"] = now
+        if prev is not None:
+            pcur = robot_xy(prev)
+            if cur and pcur and ((cur[0] - pcur[0]) ** 2 + (cur[1] - pcur[1]) ** 2) ** 0.5 < float(CFG.get("stuck_move_mm", 500)):
+                rec["moved_ts"] = prev.get("moved_ts", now)
+            rec["chg_ts"], rec["chg_batt"] = prev.get("chg_ts"), prev.get("chg_batt")
+            rec["stuck_flag"] = prev.get("stuck_flag") and rec["moved_ts"] != now
+        if status == 5:                                   # theo dõi pin khi sạc
+            if rec.get("chg_ts") is None or (batt is not None and rec.get("chg_batt") is not None and batt > rec["chg_batt"] + 1):
+                rec["chg_ts"], rec["chg_batt"] = now, batt
+        else:
+            rec["chg_ts"] = rec["chg_batt"] = None
+        if prev is None:
+            if status == 2:
+                incident("robot", "high", f"{name} đang ở trạng thái LỖI", f"Vị trí: {robot_place(rec)}", name)
+        else:
+            if prev.get("lost"):
+                incident("robot", "low", f"{name} có tín hiệu trở lại", "", name)
+            ps = prev.get("status")
+            if status != ps:
+                if status == 2:
+                    incident("robot", "high", f"{name} báo LỖI", f"Vị trí: {robot_place(rec)}", name)
+                elif ps == 2:
+                    incident("robot", "low", f"{name} hết lỗi", f"Trạng thái: {ROBOT_STATUS.get(status, status)}", name)
+                if status == 0:
+                    incident("robot", "mid", f"{name} mất kết nối (offline)", "", name)
+                elif ps == 0:
+                    incident("robot", "low", f"{name} online trở lại", "", name)
+            low = int(CFG.get("battery_low", 20))
+            if batt is not None and batt < low and (prev.get("battery") is None or prev["battery"] >= low) and status != 5:
+                incident("robot", "mid", f"{name} pin thấp ({batt}%)", "", name)
+        # ghi log: khi đổi trạng thái/task/kệ/pin, hoặc theo chu kỳ
+        last = (prev or {}).get("_logged", 0)
+        changed = prev is None or any(prev.get(k) != rec[k] for k in ("status", "order", "shelf")) or \
+            (batt is not None and prev.get("battery") is not None and abs(batt - prev["battery"]) >= 5)
+        if changed or now - last >= float(CFG.get("agv_log_interval_sec", 30)):
+            write_log("agv", {"time": now_s(), "name": name, "code": rec["code"], "status": status, "state": state, "battery": batt,
+                              "pos": pos, "xy": xy, "order": rec["order"], "shelf": rec["shelf"], "speed": rec["speed"]})
+            rec["_logged"] = now
+        else:
+            rec["_logged"] = last
+        ROBOTS[name] = rec
+
+
+REASON_VI = {"LableNotFound": "Không thấy nhãn/mã kệ (LableNotFound)", "FreePathObstacleInPath": "Có vật cản trên đường đi (FreePathObstacleInPath)"}
+DIR_VI = {"front": "phía trước", "back": "phía sau", "left": "bên trái", "right": "bên phải"}
+
+
+def parse_alarm_desc(desc):
+    """RCS gửi alarmDesc dạng JSON. Trả về (mô tả dễ đọc, mã lỗi số, id sự kiện, toạ độ mm)."""
+    try:
+        j = json.loads(desc)
+    except Exception:
+        return desc, "", "", None
+    if not isinstance(j, dict):
+        return desc, "", "", None
+    pos = j.get("Position")
+    if isinstance(pos, str):
+        try:
+            pos = json.loads(pos)
+        except Exception:
+            pos = None
+    parts = []
+    rd = str(j.get("ReasonDesc") or j.get("Reason") or "")
+    if rd and not rd.isdigit():
+        parts.append(REASON_VI.get(rd, rd))
+    if j.get("Direction"):
+        parts.append("hướng " + DIR_VI.get(j["Direction"], str(j["Direction"])))
+    if j.get("TargetShelfNo"):
+        parts.append(f"kệ cần lấy {j['TargetShelfNo']}")
+    if j.get("TaskID"):
+        parts.append(f"task {j['TaskID']}")
+    code = ""
+    r = j.get("Reason")
+    if isinstance(r, int) and r >= 1000:
+        code = str(r)
+    return ("; ".join(parts) or desc), code, str(j.get("Id") or ""), (pos if isinstance(pos, list) and len(pos) == 2 else None)
+
+
+def handle_alarm(d):
+    mark("alarm")
+    now = time.time()
+    atype = to_int(d.get("alarmType"), 0)
+    raw_desc = str(d.get("alarmDesc") or "")
+    desc, jcode, eid, apos = parse_alarm_desc(raw_desc)
+    dev = str(d.get("deviceNum") or d.get("deviceName") or "")
+    dev = CFG.get("alias", {}).get(dev, dev)
+    src = str(d.get("channelDeviceId") or "")
+    resolved = to_int(d.get("alarmStatus")) == 1
+    m = re.search(r"\((\d{4,5})\)", raw_desc)
+    code = m.group(1) if m else jcode
+    key = f"{dev}|{atype}|{eid or src}|{raw_desc[:80]}"
+    rec = ALARMS.get(key)
+    near = nearest_cell(apos) if apos else None
+    where = f"gần {near[0]} ({near[1]})" if near else ""
+    if rec and now - rec["last"] <= float(CFG.get("alarm_dedup_sec", 300)):
+        was = rec["resolved"]
+        rec["last"], rec["count"] = now, rec["count"] + 1
+        rec["resolved"] = resolved
+        if resolved and not was:
+            incident("alarm", "low", f"{rec['device']}: {rec['type_name']} đã hết", desc, rec["device"])
+    else:
+        rec = {"key": key, "first": now, "last": now, "count": 1, "device": dev, "type": atype, "type_name": ALARM_TYPES.get(atype, f"Loại {atype}"),
+               "desc": desc, "grade": to_int(d.get("alarmGrade"), 0), "grade_name": GRADE.get(to_int(d.get("alarmGrade"), 0), "?"),
+               "source": src, "place": where or place(src), "hint": str(d.get("channelName") or "").replace("\\r\\n", " ").replace("\r\n", " "),
+               "err_code": code, "resolved": resolved, "area": d.get("areaId")}
+        ALARMS[key] = rec
+        if not resolved:                      # cảnh báo đến lần đầu đã ở trạng thái hết thì không tạo sự cố mới
+            lvl = {2: "high", 1: "mid"}.get(rec["grade"], "low")
+            incident("alarm", lvl, f"{rec['device'] or 'Hệ thống'}: {rec['type_name']}" + (f" (mã {rec['err_code']})" if rec["err_code"] else ""),
+                     (desc + (f" · Tại {where or src}" if (where or src) else "")).strip(), rec["device"])
+    write_log("alarm", {"time": now_s(), **{k: rec[k] for k in ("device", "type", "type_name", "desc", "grade", "source", "err_code", "resolved", "hint")},
+                        "alarmDate_raw": d.get("alarmDate"), "count": rec["count"], "pos": apos, "raw": raw_desc})
+
+
+def handle_task(d):
+    mark("task")
+    status = to_int(d.get("status"))
+    ev = {"ts": time.time(), "time": now_s(), "order": str(d.get("orderId") or ""), "status": status, "status_name": TASK_STATUS.get(status, str(status)),
+          "device": CFG.get("alias", {}).get(str(d.get("deviceNum") or ""), str(d.get("deviceNum") or "")), "point": str(d.get("qrContent") or ""),
+          "point_place": place(d.get("qrContent")), "template": str(d.get("modelProcessCode") or ""), "error": str(d.get("errorDesc") or ""),
+          "shelf": str(d.get("shelfNumber") or ""), "sub_status": str(d.get("subTaskStatus") or ""), "sub_type": str(d.get("subTaskTypeId") or "")}
+    TASK_EVENTS.append(ev)
+    TASKS[ev["order"]] = ev
+    if len(TASKS) > 800:
+        for k in list(TASKS)[:200]:
+            TASKS.pop(k, None)
+    write_log("task", ev)
+    if status in (5, 7):
+        incident("task", "high", f"Task {ev['status_name'].lower()}: {ev['order'] or '(không mã)'}",
+                 f"{ev['error']} · Robot {ev['device'] or '?'} · Điểm {ev['point']} {ev['point_place']}".strip(" ·"), ev["device"])
+
+
+# ---------------------------------------------------------------- nhận callback từ RCS
+OK = {"code": 1000, "desc": "success"}
+
+
+async def receive(request, kind):
+    body = await request.body()
+    ip = request.client.host if request.client else ""
+    data = None
+    for enc in ("utf-8-sig", "gbk", "latin-1"):
+        try:
+            data = json.loads(body.decode(enc))
+            break
+        except (ValueError, UnicodeDecodeError):
+            continue
+    if CFG.get("log_raw") or data is None:
+        write_log("raw", {"time": now_s(), "kind": kind, "ip": ip, "ok_json": data is not None, "body": body[:4000].decode("utf-8", "replace")})
+    if data is None:
+        incident("system", "mid", f"RCS gửi dữ liệu {kind} không đọc được (không phải JSON)", f"từ {ip}")
+        return JSONResponse(OK)          # vẫn trả 1000 để RCS không gửi lại liên tục
+    data = clean(data)
+    try:
+        if kind == "agv":
+            handle_agv(data if isinstance(data, list) else [data])
+        elif kind == "alarm":
+            for d in (data if isinstance(data, list) else [data]):
+                handle_alarm(d)
+        else:
+            for d in (data if isinstance(data, list) else [data]):
+                handle_task(d)
+    except Exception as e:       # lỗi xử lý không được làm RCS gửi lại
+        write_log("raw", {"time": now_s(), "kind": kind, "error": f"{type(e).__name__}: {e}", "body": str(data)[:2000]})
+    return JSONResponse(OK)
+
+
+# ---------------------------------------------------------------- API cho giao diện
+def J(d, status=200):
+    return JSONResponse(d, status_code=status, headers={"Cache-Control": "no-store"})
+
+
+def dur_vi(sec):
+    sec = int(sec)
+    return f"{sec} giây" if sec < 60 else f"{sec // 60} phút" if sec < 3600 else f"{sec // 3600} giờ {sec % 3600 // 60} phút"
+
+
+def predict(r, now):
+    """Lỗi dự đoán cho một robot, suy ra từ cảnh báo RCS, trạng thái, vị trí đứng yên, pin, task lỗi."""
+    name, out = r["name"], []
+
+    def add(level, title, detail=""):
+        out.append({"level": level, "title": title, "detail": detail})
+
+    act = float(CFG.get("alarm_active_minutes", 10)) * 60
+    for a in sorted(ALARMS.values(), key=lambda a: -a["last"]):
+        if a["device"] == name and not a["resolved"] and now - a["last"] <= act:
+            code = a["err_code"]
+            h = HINTS["codes"].get(code)
+            title = a["type_name"] + (f" (mã {code})" if code else "")
+            detail = f"{h[0]}. Cách xử lý: {h[1]}" if h else (HINTS["types"].get(str(a["type"])) or a["desc"])
+            if a["source"]:
+                detail += f" Tại điểm {a['source']}" + (f" ({a['place']})" if a["place"] else "") + "."
+            if a["hint"] and not h:
+                detail += " Gợi ý RCS: " + a["hint"]
+            add({2: "high", 1: "mid"}.get(a["grade"], "low"), title, detail)
+    if r.get("unseen"):
+        return out
+    st = r["status"]
+    if r.get("lost"):
+        add("high", f"Mất tín hiệu {dur_vi(r['age'])}", "Có thể do Wi-Fi, tắt máy hoặc hết pin. Kiểm tra tại xe. Vị trí cuối: " + (r["place"] or "không rõ") + ".")
+    elif st == 0 or str(r.get("state")) == "Offline":
+        add("mid", "Robot offline", "Kiểm tra mạng, khởi động lại thiết bị. Ngoài ca có thể do tắt máy.")
+    if st == 2 and not any(p["level"] == "high" for p in out):
+        add("high", "Robot báo LỖI (Fault)", "RCS chưa gửi chi tiết. Xem cảnh báo của robot trên RCS hoặc ra kiểm tra tại xe.")
+    b = r.get("battery")
+    if b is not None and b < int(CFG.get("battery_low", 20)) and st != 5:
+        add("mid", f"Pin thấp ({b}%)", "Đưa robot đi sạc.")
+    if st == 4 and not r.get("lost") and now - r.get("moved_ts", now) >= float(CFG.get("stuck_sec", 180)):
+        add("mid", f"Nghi kẹt: đứng yên {dur_vi(now - r['moved_ts'])} khi đang chạy task",
+            "Thường do robot khác/kệ/vật cản chắn đường hoặc chờ điều phối. Xem tab Sự cố có cảnh báo vật cản/chặn đường không.")
+    if st == 5 and r.get("chg_ts") and now - r["chg_ts"] >= float(CFG.get("charge_stall_min", 30)) * 60:
+        add("mid", f"Đang sạc {dur_vi(now - r['chg_ts'])} nhưng pin không tăng", "Kiểm tra tiếp điểm sạc và trạm sạc.")
+    for ev in reversed(TASK_EVENTS):
+        if ev["device"] == name and ev["status"] in (5, 7) and now - ev["ts"] <= float(CFG.get("task_fail_minutes", 30)) * 60:
+            add("mid", f"Task vừa {ev['status_name'].lower()}", (ev["error"] or "RCS không nêu lý do") + f" · task {ev['order']}")
+            break
+    out.sort(key=lambda p: {"high": 0, "mid": 1, "low": 2}[p["level"]])
+    return out
+
+
+def robots_view():
+    now = time.time()
+    out = []
+    for r in ROBOTS.values():
+        age = now - r["ts"]
+        lost = age > float(CFG.get("robot_stale_sec", 60))
+        d = {**{k: v for k, v in r.items() if not k.startswith("_")}, "age": int(age), "lost": lost,
+             "status_name": ROBOT_STATUS.get(r["status"], r["state"] or "?"), "place": robot_place(r), "path_text": r["path"]}
+        d["map"] = to_pixel(robot_xy(r))
+        d["preds"] = predict(d, now)
+        out.append(d)
+    for name in CFG.get("robots", []):          # robot khai trong config nhưng chưa có dữ liệu
+        if name not in ROBOTS:
+            out.append({"name": name, "status": None, "state": "", "battery": None, "pos": "", "xy": [], "order": "", "shelf": "", "path": "", "speed": None,
+                        "payload": "", "code": "", "age": None, "lost": False, "unseen": True, "status_name": "Chưa có dữ liệu", "place": "", "path_text": "",
+                        "map": None, "preds": []})
+    order = {n: i for i, n in enumerate(CFG.get("robots", []))}
+    out.sort(key=lambda x: (0 if x["status"] == 2 else 1 if (x["lost"] or x["status"] == 0) else 3 if x.get("unseen") else 2, order.get(x["name"], 99), x["name"]))
+    return out
+
+
+async def api_state(request: Request):
+    now = time.time()
+    rob = robots_view()
+    act = [a for a in ALARMS.values() if not a["resolved"] and now - a["last"] <= float(CFG.get("alarm_active_minutes", 10)) * 60]
+    silence = now - CHAN["agv"]["last"] if CHAN["agv"]["last"] else None
+    return J({"now": now_s(), "robots": rob,
+              "summary": {"total": len(rob), "unseen": sum(1 for r in rob if r.get("unseen")), "fault": sum(1 for r in rob if r["status"] == 2), "lost": sum(1 for r in rob if r["lost"] or r["status"] == 0),
+                          "running": sum(1 for r in rob if r["status"] == 4 and not r["lost"]), "idle": sum(1 for r in rob if r["status"] == 1 and not r["lost"]),
+                          "charging": sum(1 for r in rob if r["status"] == 5 and not r["lost"]), "active_alarms": len(act)},
+              "silence_sec": int(silence) if silence is not None else None, "silence_warn": float(CFG.get("silence_warn_sec", 120)),
+              "never": CHAN["agv"]["last"] == 0})
+
+
+async def api_incidents(request: Request):
+    now = time.time()
+    hours = float(request.query_params.get("hours") or 24)
+    inc = [i for i in INCIDENTS if now - i["ts"] <= hours * 3600]
+    inc.reverse()
+    act = [a for a in ALARMS.values() if not a["resolved"] and now - a["last"] <= float(CFG.get("alarm_active_minutes", 10)) * 60]
+    act.sort(key=lambda a: (-a["grade"], -a["last"]))
+    fmt = lambda a: {**{k: v for k, v in a.items() if k != "key"}, "first_s": now_s(a["first"]), "last_s": now_s(a["last"]), "ago": int(now - a["last"])}
+    return J({"incidents": inc[:300], "active": [fmt(a) for a in act]})
+
+
+async def api_tasks(request: Request):
+    ev = list(TASK_EVENTS)[-100:]
+    ev.reverse()
+    return J({"events": ev, "now": now_s()})
+
+
+async def api_system(request: Request):
+    now = time.time()
+    chans = {k: {"count": v["count"], "today": v["today"], "ago": int(now - v["last"]) if v["last"] else None, "last": now_s(v["last"]) if v["last"] else ""}
+             for k, v in CHAN.items()}
+    days = []
+    if os.path.isdir(LOG_DIR):
+        for name in sorted(os.listdir(LOG_DIR), reverse=True):
+            p = os.path.join(LOG_DIR, name)
+            if os.path.isdir(p):
+                days.append({"date": name, "files": [{"name": f, "kb": round(os.path.getsize(os.path.join(p, f)) / 1024, 1)} for f in sorted(os.listdir(p))]})
+    return J({"uptime": int(now - START), "channels": chans, "paths": CFG["paths"], "rcs_url": CFG.get("public_host", "") + ":" + str(CFG["listen"]["port_rcs"]), "web_url": CFG.get("public_host", "") + ":" + str(CFG["listen"]["port_web"]), "retention_days": CFG["retention_days"], "days": days,
+              "log_raw": CFG.get("log_raw"), "nodes": len(BY_CODE), "now": now_s()})
+
+
+async def api_history(request: Request):
+    q = request.query_params
+    date, kind = q.get("date") or day(), q.get("kind") or "incident"
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) or kind not in ("alarm", "agv", "task", "incident", "raw"):
+        return J({"error": "tham số không hợp lệ"}, 400)
+    rows = read_lines(os.path.join(LOG_DIR, date, kind + ".jsonl"), 2000)
+    s = (q.get("q") or "").strip().lower()
+    if s:
+        rows = [r for r in rows if s in json.dumps(r, ensure_ascii=False).lower()]
+    rows.reverse()
+    return J({"date": date, "kind": kind, "count": len(rows), "rows": rows[:int(q.get("limit") or 200)]})
+
+
+async def download(request: Request):
+    d, f = request.path_params["date"], request.path_params["file"]
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", d) or not re.fullmatch(r"[a-z]+\.jsonl", f):
+        return J({"error": "không hợp lệ"}, 400)
+    p = os.path.join(LOG_DIR, d, f)
+    return FileResponse(p, filename=f"{d}_{f}") if os.path.exists(p) else J({"error": "không có file"}, 404)
+
+
+async def api_map(request: Request):
+    return J({"ready": bool(MAP), "w": MAP["w"] if MAP else 0, "h": MAP["h"] if MAP else 0, "url": "/map/map.png?v=" + str(int(os.path.getmtime(os.path.join(MAP_DIR, "map.png")))) if MAP and os.path.exists(os.path.join(MAP_DIR, "map.png")) else ""})
+
+
+async def map_file(request: Request):
+    p = os.path.join(MAP_DIR, "map.png")
+    return FileResponse(p, headers={"Cache-Control": "public, max-age=86400"}) if os.path.exists(p) else J({"error": "chưa có ảnh bản đồ"}, 404)
+
+
+async def index(request: Request):
+    return FileResponse(os.path.join(HERE, "index.html"), headers={"Cache-Control": "no-store"})
+
+
+# ---------------------------------------------------------------- nền: phát hiện mất tín hiệu, dọn log
+async def watchdog():
+    last_clean = 0
+    while True:
+        await asyncio.sleep(10)
+        now = time.time()
+        for name, r in ROBOTS.items():
+            lost = now - r["ts"] > float(CFG.get("robot_stale_sec", 60))
+            if lost and not r.get("lost"):
+                r["lost"] = True
+                incident("robot", "high", f"{name} MẤT TÍN HIỆU", f"Không có dữ liệu {int(now - r['ts'])} giây. Vị trí cuối: {robot_place(r)}", name)
+            elif not lost:
+                r["lost"] = False
+        for name, r in ROBOTS.items():
+            if r["status"] == 4 and not r.get("lost") and now - r.get("moved_ts", now) >= float(CFG.get("stuck_sec", 180)):
+                if not r.get("stuck_flag"):
+                    r["stuck_flag"] = True
+                    incident("robot", "mid", f"{name} nghi kẹt: đứng yên khi đang chạy task", f"Đứng yên {dur_vi(now - r['moved_ts'])} · {robot_place(r)} · task {r['order']}", name)
+        c = CHAN["agv"]
+        if c["last"] and now - c["last"] > float(CFG.get("silence_warn_sec", 120)) and not FLAGS["silent"]:
+            FLAGS["silent"] = True
+            incident("system", "high", "RCS ngừng gửi dữ liệu trạng thái robot", f"Lần cuối {now_s(c['last'])}. Kiểm tra mạng/RCS hoặc tool này.")
+        if now - last_clean > 3600:
+            last_clean = now
+            cleanup_logs()
+
+
+def restore_today():
+    """Nạp lại log hôm nay sau khi khởi động lại để giao diện không trống."""
+    d = os.path.join(LOG_DIR, day())
+    for r in read_lines(os.path.join(d, "incident.jsonl"), 300):
+        if "ts" in r:
+            INCIDENTS.append(r)
+    for r in read_lines(os.path.join(d, "task.jsonl"), 300):
+        if "ts" in r:
+            TASK_EVENTS.append(r)
+            TASKS[r.get("order", "")] = r
+
+
+@asynccontextmanager
+async def lifespan(app):
+    cleanup_logs()
+    restore_today()
+    incident("system", "low", "G8 Monitor khởi động", f"Đang chờ dữ liệu từ RCS tại {', '.join(CFG['paths'].values())}")
+    t = asyncio.create_task(watchdog())
+    yield
+    t.cancel()
+
+
+rcs_routes = []
+routes = [Route("/", index), Route("/api/state", api_state), Route("/api/incidents", api_incidents), Route("/api/tasks", api_tasks),
+          Route("/api/system", api_system), Route("/api/map", api_map), Route("/map/map.png", map_file), Route("/api/history", api_history), Route("/logs/{date}/{file}", download)]
+def make_receiver(kind):
+    async def handler(request: Request):
+        return await receive(request, kind)
+    return handler
+
+
+for kind, path in CFG["paths"].items():
+    rcs_routes.append(Route(path, make_receiver(kind), methods=["POST", "PUT"]))
+app = Starlette(routes=routes, lifespan=lifespan)               # cổng WEB: giao diện + API xem
+
+
+async def rcs_ok(request: Request):
+    return JSONResponse({"service": "G8 Monitor - cổng nhận dữ liệu RCS", "paths": CFG["paths"]})
+
+
+rcs_app = Starlette(routes=[Route("/", rcs_ok)] + rcs_routes)       # cổng RCS: chỉ nhận 3 đường dẫn RCS đẩy lên
+
+async def serve_all():
+    host = CFG["listen"]["host"]
+    servers = [uvicorn.Server(uvicorn.Config(rcs_app, host=host, port=int(CFG["listen"]["port_rcs"]), log_level="warning")),
+               uvicorn.Server(uvicorn.Config(app, host=host, port=int(CFG["listen"]["port_web"]), log_level="warning"))]
+    await asyncio.gather(*[sv.serve() for sv in servers])
+
+
+if __name__ == "__main__":
+    asyncio.run(serve_all())

@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f766e">
+<title>G8 Monitor - Giám sát robot</title>
+<style>
+:root{--g:#0f766e;--bg:#f3f5f7;--card:#fff;--line:#e2e6ea;--tx:#1b2430;--mut:#6b7684;--red:#c2261c;--ok:#157f3b;--amb:#b45309}
+*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding-bottom:84px}
+header{background:var(--g);color:#fff;padding:10px 16px;position:sticky;top:0;z-index:5}
+header h1{margin:0;font-size:18px;display:flex;justify-content:space-between;align-items:center}
+#conn{font-size:12px;font-weight:600;padding:3px 10px;border-radius:99px;background:rgba(255,255,255,.2)}
+#conn.bad{background:#c2261c}#conn.ok{background:#157f3b}
+main{max-width:900px;margin:0 auto;padding:12px}
+.tab{display:none}.tab.active{display:block}
+nav{position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:1px solid var(--line);display:flex;z-index:6;padding-bottom:env(safe-area-inset-bottom)}
+nav button{flex:1;border:0;background:none;padding:9px 0 8px;font-size:11px;color:var(--mut);display:flex;flex-direction:column;align-items:center;gap:2px;min-height:56px;position:relative}
+nav button b{font-size:20px;line-height:1}nav button.active{color:var(--g);font-weight:700}
+nav .dot{position:absolute;top:4px;right:calc(50% - 22px);background:var(--red);color:#fff;border-radius:99px;font-size:11px;min-width:18px;padding:0 5px;line-height:18px}
+.sum{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
+.sum div{background:#fff;border:1px solid var(--line);border-radius:12px;padding:8px 4px;text-align:center}
+.sum b{display:block;font-size:22px}.sum small{color:var(--mut);font-size:12px}
+.sum .f b{color:var(--red)}.sum .r b{color:var(--ok)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:0}
+.card.fault{border:2px solid var(--red);background:#fff6f5}.card.lost{border-color:#d97706;background:#fffbeb}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.card h3{margin:0;font-size:19px}
+.chip{font-size:13px;padding:3px 9px;border-radius:99px;background:#eef1f4;color:#394452;white-space:nowrap}
+.chip.run{background:#dcfce7;color:#14532d}.chip.idle{background:#e0f2fe;color:#0c4a6e}.chip.chg{background:#ede9fe;color:#4c1d95}
+.chip.err{background:#fee2e2;color:#991b1b;font-weight:700}.chip.off{background:#fef3c7;color:#78350f}
+.mut{color:var(--mut);font-size:13px}.kv{font-size:14px;margin-top:3px;word-break:break-word}.kv span{color:var(--mut)}
+.bat{height:8px;background:#e5e7eb;border-radius:99px;overflow:hidden;margin-top:8px}.bat i{display:block;height:100%;background:var(--ok)}.bat.low i{background:var(--red)}
+h2{font-size:17px;margin:14px 2px 8px}
+.inc{background:#fff;border:1px solid var(--line);border-left:6px solid #94a3b8;border-radius:10px;padding:10px 12px;margin-bottom:8px}
+.inc.high{border-left-color:var(--red)}.inc.mid{border-left-color:#d97706}.inc.low{border-left-color:var(--ok)}
+.inc b{font-size:15px}.inc .t{color:var(--mut);font-size:12px}.inc div{font-size:14px;word-break:break-word}
+.empty{text-align:center;color:var(--mut);padding:22px 0}
+.al{background:#fff6f5;border:1px solid #f5c2bd;border-radius:12px;padding:10px 12px;margin-bottom:8px}
+.al.mid{background:#fffbeb;border-color:#f3d28a}.al.low{background:#f8fafc;border-color:var(--line)}
+select,input{font-size:16px;padding:10px;border:1px solid #c5ccd3;border-radius:10px;background:#fff;min-height:44px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}.bar>*{flex:1;min-width:110px}
+button.sm{font-size:15px;padding:9px 12px;border:1px solid var(--g);background:#fff;color:var(--g);border-radius:10px;min-height:44px;font-weight:600}
+table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+.tw{overflow-x:auto;background:#fff;border:1px solid var(--line);border-radius:10px}
+pre{margin:0;white-space:pre-wrap;word-break:break-all;font-size:12px}
+a{color:var(--g)}
+.mapwrap{position:relative;background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+#vp{position:relative;height:calc(100vh - 360px);min-height:300px;touch-action:none;cursor:grab;background:#fdfdfd;user-select:none;-webkit-user-select:none}
+#vp.drag{cursor:grabbing}
+#stage{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}
+#stage img{display:block;max-width:none;pointer-events:none;-webkit-user-drag:none}
+.mk{position:absolute;transform:translate(-50%,-50%) scale(var(--inv,1));display:flex;flex-direction:column;align-items:center;cursor:pointer;z-index:2}
+.mk .dot{width:26px;height:26px;border-radius:50%;border:3px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.55);background:var(--c);display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:800}
+.mk .nm{margin-top:2px;font-size:12px;font-weight:700;background:rgba(255,255,255,.92);border:1px solid #cbd5e1;border-radius:6px;padding:0 4px;white-space:nowrap}
+.mk.sel .dot{outline:4px solid #facc15}.mk.sel{z-index:4}
+.mk.warn .dot{box-shadow:0 0 0 3px #f59e0b,0 1px 5px rgba(0,0,0,.55)}
+.mk.err .dot{animation:pulse 1.1s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(220,38,38,.8)}100%{box-shadow:0 0 0 16px rgba(220,38,38,0)}}
+.zoom{position:absolute;right:8px;top:8px;display:flex;flex-direction:column;gap:6px;z-index:5}
+.zoom button{width:44px;height:44px;border-radius:10px;border:1px solid #cbd5e1;background:#fff;font-size:22px;font-weight:700;box-shadow:0 1px 4px rgba(0,0,0,.2)}
+.legend{position:absolute;left:8px;bottom:8px;z-index:5;display:flex;flex-wrap:wrap;gap:4px;max-width:70%}
+.legend span{font-size:11px;background:rgba(255,255,255,.93);border:1px solid #d8dee4;border-radius:99px;padding:1px 8px;display:flex;align-items:center;gap:4px}
+.legend i{width:10px;height:10px;border-radius:50%;display:inline-block}
+#mapAlert{display:none;background:#fee2e2;color:#7f1d1d;border:1px solid #fecaca;border-radius:10px;padding:8px 12px;margin-bottom:8px;font-size:14px;font-weight:600}
+#chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:8px;margin-bottom:6px}
+#chips button{flex:0 0 auto;border:2px solid #cbd5e1;background:#fff;border-radius:99px;padding:6px 12px;font-size:14px;font-weight:700;min-height:40px;display:flex;align-items:center;gap:6px}
+#chips button i{width:12px;height:12px;border-radius:50%;background:var(--c)}
+#chips button.sel{border-color:#facc15;background:#fffbeb}
+#info{margin-bottom:8px;max-height:30vh;overflow-y:auto;background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 12px;min-height:76px}
+#info .hd{display:flex;align-items:center;gap:8px;flex-wrap:wrap}#info .hd b{font-size:18px}
+.pred{border-left:5px solid #94a3b8;background:#f8fafc;border-radius:8px;padding:7px 10px;margin-top:7px;font-size:14px}
+.pred.high{border-color:#dc2626;background:#fef2f2}.pred.mid{border-color:#d97706;background:#fffbeb}.pred.low{border-color:#16a34a;background:#f0fdf4}
+.pred b{display:block}
+
+</style>
+</head>
+<body>
+<header><h1><span>🤖 G8 Monitor</span><span id="conn">…</span></h1></header>
+<main>
+
+<section class="tab active" id="t0">
+  <div id="mapAlert"></div>
+  <div id="chips"></div>
+  <div id="info"><div class="mut">Chạm vào robot trên bản đồ (hoặc tên robot phía trên) để xem trạng thái và lỗi dự đoán.</div></div>
+  <div class="mapwrap">
+    <div id="vp"><div id="stage"><img id="mapimg" alt="Bản đồ"></div></div>
+    <div class="zoom"><button id="zin">+</button><button id="zout">−</button><button id="zfit" title="Vừa khung">⤢</button></div>
+    <div class="legend" id="legend"></div>
+  </div>
+  <div class="mut" id="mapnote" style="margin-top:6px"></div>
+</section>
+
+<section class="tab" id="t1">
+  <div class="sum" id="sum"></div>
+  <div class="grid" id="robots"></div>
+</section>
+
+<section class="tab" id="t2">
+  <h2>🚨 Cảnh báo đang xảy ra</h2><div class="mut" style="margin:-4px 2px 8px">Cảnh báo RCS gửi trong vài phút gần đây và chưa thấy báo "đã xử lý".</div>
+  <div id="active"></div>
+  <h2>📜 Sự cố gần đây</h2>
+  <div class="bar"><select id="hrs"><option value="1">1 giờ qua</option><option value="6">6 giờ qua</option><option value="24" selected>24 giờ qua</option><option value="168">7 ngày qua</option></select>
+  <select id="lvl"><option value="">Tất cả mức</option><option value="high">Chỉ nghiêm trọng</option><option value="mid">Trung bình trở lên</option></select></div>
+  <div id="incs"></div>
+</section>
+
+<section class="tab" id="t3">
+  <h2>📋 Trạng thái task (RCS báo)</h2>
+  <div class="mut" style="margin:-4px 2px 8px">RCS chỉ báo ở các node đã cấu hình trong mẫu task.</div>
+  <div id="tasks"></div>
+</section>
+
+<section class="tab" id="t4">
+  <h2>⚙️ Kết nối với RCS</h2><div id="sys"></div>
+  <h2>🗂 Nhật ký theo ngày</h2>
+  <div class="bar"><input type="date" id="hDate"><select id="hKind"><option value="incident">Sự cố</option><option value="alarm">Cảnh báo</option><option value="task">Task</option><option value="agv">Robot</option><option value="raw">Dữ liệu lỗi/thô</option></select>
+  <input id="hQ" placeholder="Tìm (vd. LT03, 8039)"><button class="sm" id="hGo">Xem</button></div>
+  <div class="tw"><table id="hist"></table></div>
+  <h2>⬇️ Tải file log</h2><div id="files"></div>
+</section>
+</main>
+
+<nav id="nav">
+  <button class="active" data-t="t0"><b>🗺️</b>Bản đồ</button>
+  <button data-t="t1"><b>🤖</b>Robot</button>
+  <button data-t="t2"><b>🚨</b>Sự cố<span class="dot" id="dot" hidden></span></button>
+  <button data-t="t3"><b>📋</b>Task</button>
+  <button data-t="t4"><b>⚙️</b>Hệ thống</button>
+</nav>
+
+<script>
+const $=s=>document.querySelector(s);
+const el=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e};
+const J=async u=>{try{const r=await fetch(u);return await r.json()}catch(e){return null}};
+function ago(s){if(s==null)return"chưa có";s=Math.round(s);return s<60?s+" giây":s<3600?Math.floor(s/60)+" phút":Math.floor(s/3600)+" giờ "+Math.floor(s%3600/60)+" phút"}
+let cur="t0";
+$("#nav").onclick=e=>{const b=e.target.closest("button");if(!b)return;cur=b.dataset.t;
+  document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("active",x===b));
+  document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("active",x.id===cur));scrollTo(0,0);if(cur==="t0")setTimeout(fit,50);refresh()};
+
+function chipClass(r){if(r.unseen)return"";if(r.lost||r.status===0)return"off";return{1:"idle",2:"err",4:"run",5:"chg"}[r.status]||""}
+function robotCard(r){
+  const c=el("div","card"+(r.status===2?" fault":r.lost?" lost":""));
+  const top=el("div","row");top.append(el("h3",null,r.name),el("span","chip "+chipClass(r),r.lost?"MẤT TÍN HIỆU":r.status_name));c.append(top);
+  if(r.unseen)return c.append(el("div","mut","Chưa nhận dữ liệu từ RCS")),c;
+  if(r.battery!=null){const b=el("div","bat"+(r.battery<20?" low":""));const i=el("i");i.style.width=Math.max(0,Math.min(100,r.battery))+"%";b.append(i);
+    const k=el("div","kv");k.append(el("span",null,"Pin: "),document.createTextNode(r.battery+"%"));c.append(k,b)}
+  const kv=(a,b)=>{if(!b)return;const d=el("div","kv");d.append(el("span",null,a+": "),document.createTextNode(b));c.append(d)};
+  kv("Vị trí",r.place||r.pos);kv("Task",r.order);kv("Kệ",r.shelf);kv("Tốc độ",r.speed?r.speed+" mm/s":"");
+  c.append(el("div","mut",r.unseen?"Chưa nhận dữ liệu từ RCS":"Cập nhật "+ago(r.age)+" trước"));return c;
+}
+async function loadRobots(){
+  const s=await J("/api/state"),c=$("#conn");
+  if(!s){c.className="bad";c.textContent="Mất kết nối tool";return}
+  if(s.never){c.className="";c.textContent="Chờ dữ liệu RCS…"}
+  else if(s.silence_sec!=null&&s.silence_sec>s.silence_warn){c.className="bad";c.textContent="RCS im lặng "+ago(s.silence_sec)}
+  else{c.className="ok";c.textContent="Đang nhận dữ liệu"}
+  const m=s.summary,S=$("#sum");S.replaceChildren();
+  [["Robot",m.total,""],["Đang chạy",m.running,"r"],["Rảnh",m.idle,""],["Lỗi",m.fault,"f"]].forEach(([l,v,cl])=>{const d=el("div",cl);d.append(el("b",null,v),el("small",null,l));S.append(d)});
+  M.robots=s.robots;if(M.ready)drawMarkers();drawChips();drawInfo();
+  const R=$("#robots");R.replaceChildren();s.robots.forEach(r=>R.append(robotCard(r)));
+  if(!s.robots.length)R.append(el("div","empty","Chưa có robot nào báo trạng thái.\nKiểm tra RCS đã khai URL /ics/agv-status chưa."));
+  const dot=$("#dot"),n=m.fault+m.active_alarms;dot.hidden=!n;dot.textContent=n;
+}
+async function loadInc(){
+  const r=await J("/api/incidents?hours="+$("#hrs").value);if(!r)return;
+  const A=$("#active");A.replaceChildren();
+  r.active.forEach(a=>{const d=el("div","al "+({2:"",1:"mid"}[a.grade]??"low"));
+    d.append(el("b",null,(a.device||"Hệ thống")+" · "+a.type_name+(a.err_code?" (mã "+a.err_code+")":"")+"  — mức "+a.grade_name));
+    d.append(el("div",null,a.desc));if(a.source)d.append(el("div","mut","Tại: "+a.source+(a.place?" · "+a.place:"")));
+    if(a.hint)d.append(el("div","mut","Gợi ý: "+a.hint));d.append(el("div","mut","Từ "+a.first_s+" · mới nhất "+ago(a.ago)+" trước · báo "+a.count+" lần"));A.append(d)});
+  if(!r.active.length)A.append(el("div","empty","✔ Không có cảnh báo đang xảy ra"));
+  const I=$("#incs");I.replaceChildren();const lv=$("#lvl").value;
+  r.incidents.filter(i=>!lv||(lv==="high"?i.level==="high":i.level!=="low")).forEach(i=>{const d=el("div","inc "+i.level);d.append(el("b",null,i.title));
+    if(i.detail)d.append(el("div",null,i.detail));d.append(el("div","t",i.time));I.append(d)});
+  if(!I.children.length)I.append(el("div","empty","Không có sự cố"));
+}
+async function loadTasks(){
+  const r=await J("/api/tasks");if(!r)return;const T=$("#tasks");T.replaceChildren();
+  r.events.forEach(e=>{const bad=e.status===5||e.status===7;const d=el("div","inc "+(bad?"high":e.status===8?"low":""));
+    d.append(el("b",null,e.status_name+" · "+(e.order||"(không mã)")));
+    const bits=[e.device&&"Robot "+e.device,e.point&&"Điểm "+e.point+(e.point_place?" ("+e.point_place+")":""),e.template,e.error&&"Lỗi: "+e.error].filter(Boolean).join(" · ");
+    if(bits)d.append(el("div",null,bits));d.append(el("div","t",e.time));T.append(d)});
+  if(!r.events.length)T.append(el("div","empty","Chưa nhận trạng thái task nào"));
+}
+async function loadSys(){
+  const r=await J("/api/system");if(!r)return;const S=$("#sys");S.replaceChildren();
+  const names={agv:"Trạng thái robot",alarm:"Cảnh báo",task:"Trạng thái task"};
+  Object.entries(r.channels).forEach(([k,v])=>{const d=el("div","inc "+(v.ago==null?"mid":"low"));
+    d.append(el("b",null,names[k]+":  "+r.rcs_url+r.paths[k]),el("div",null,v.ago==null?"Chưa nhận lần nào":"Lần cuối "+ago(v.ago)+" trước ("+v.last+") · hôm nay "+v.today+" bản tin"));S.append(d)});
+  S.append(el("div","mut","Cổng nhận dữ liệu RCS: "+r.rcs_url+"  ·  Cổng xem web: "+r.web_url));S.append(el("div","mut","Tool chạy "+ago(r.uptime)+" · giữ log "+r.retention_days+" ngày · bảng điểm highbay: "+r.nodes+" mã"));
+  const F=$("#files");F.replaceChildren();
+  r.days.forEach(d=>{const p=el("div","kv");p.append(el("b",null,d.date+": "));d.files.forEach(f=>{const a=el("a",null,f.name.replace(".jsonl","")+" ("+f.kb+" KB)");a.href="/logs/"+d.date+"/"+f.name;a.style.marginRight="10px";p.append(a)});F.append(p)});
+}
+async function loadHist(){
+  const r=await J(`/api/history?date=${$("#hDate").value}&kind=${$("#hKind").value}&q=${encodeURIComponent($("#hQ").value)}&limit=200`);
+  const H=$("#hist");H.replaceChildren();if(!r||r.error){H.append(el("tr",null,r?r.error:"Lỗi"));return}
+  r.rows.forEach(x=>{const tr=el("tr"),t=el("td");t.style.whiteSpace="nowrap";t.textContent=x.time||"";const b=el("td");const p=el("pre");
+    const c={...x};delete c.time;delete c.ts;p.textContent=Object.entries(c).filter(([k,v])=>v!==""&&v!=null).map(([k,v])=>k+"="+(typeof v==="object"?JSON.stringify(v):v)).join("  ");b.append(p);tr.append(t,b);H.append(tr)});
+  if(!r.rows.length)H.append(el("tr",null,"Không có dữ liệu"));
+}
+$("#hGo").onclick=loadHist;$("#hrs").onchange=loadInc;$("#lvl").onchange=loadInc;
+$("#hDate").value=new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
+
+// ================= BẢN ĐỒ =================
+const STCOLOR={4:"#16a34a",1:"#2563eb",5:"#7c3aed",2:"#dc2626",3:"#ca8a04",7:"#ca8a04",0:"#6b7280"};
+const colorOf=r=>r.lost?"#6b7280":(STCOLOR[r.status]||"#6b7280");
+let M={w:0,h:0,s:1,tx:0,ty:0,ready:false,sel:null,robots:[]};
+const vp=$("#vp"),stage=$("#stage");
+function applyT(){stage.style.transform=`translate(${M.tx}px,${M.ty}px) scale(${M.s})`;stage.style.setProperty("--inv",1/M.s)}
+function fit(){const W=vp.clientWidth,H=vp.clientHeight;if(!M.w||!W)return;M.s=Math.min(W/M.w,H/M.h);M.tx=(W-M.w*M.s)/2;M.ty=(H-M.h*M.s)/2;applyT()}
+function zoomAt(f,cx,cy){const n=Math.max(0.05,Math.min(8,M.s*f));f=n/M.s;M.tx=cx-(cx-M.tx)*f;M.ty=cy-(cy-M.ty)*f;M.s=n;applyT()}
+function centerOn(px,py,minZ){const W=vp.clientWidth,H=vp.clientHeight;M.s=Math.max(M.s,minZ||0.5);M.tx=W/2-px*M.s;M.ty=H/2-py*M.s;applyT()}
+(function initGestures(){
+  const ptrs=new Map();let last=null,pinch=0,moved=0;
+  vp.addEventListener("pointerdown",e=>{if(e.target.closest(".mk"))return;vp.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});vp.classList.add("drag");moved=0});
+  vp.addEventListener("pointermove",e=>{if(!ptrs.has(e.pointerId))return;const p=ptrs.get(e.pointerId),dx=e.clientX-p.x,dy=e.clientY-p.y;ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(ptrs.size===1){M.tx+=dx;M.ty+=dy;applyT()}
+    else if(ptrs.size===2){const [a,b]=[...ptrs.values()],d=Math.hypot(a.x-b.x,a.y-b.y),r=vp.getBoundingClientRect();
+      if(pinch)zoomAt(d/pinch,(a.x+b.x)/2-r.left,(a.y+b.y)/2-r.top);pinch=d}});
+  const up=e=>{ptrs.delete(e.pointerId);pinch=0;if(!ptrs.size)vp.classList.remove("drag")};
+  vp.addEventListener("pointerup",up);vp.addEventListener("pointercancel",up);
+  vp.addEventListener("wheel",e=>{e.preventDefault();const r=vp.getBoundingClientRect();zoomAt(e.deltaY<0?1.25:0.8,e.clientX-r.left,e.clientY-r.top)},{passive:false});
+  vp.addEventListener("dblclick",e=>{const r=vp.getBoundingClientRect();zoomAt(2,e.clientX-r.left,e.clientY-r.top)});
+  $("#zin").onclick=()=>zoomAt(1.5,vp.clientWidth/2,vp.clientHeight/2);$("#zout").onclick=()=>zoomAt(1/1.5,vp.clientWidth/2,vp.clientHeight/2);$("#zfit").onclick=fit;
+  window.addEventListener("resize",()=>{if(cur==="t0")fit()});
+})();
+const LEG=[["#16a34a","Đang chạy"],["#2563eb","Rảnh"],["#7c3aed","Đang sạc"],["#dc2626","Lỗi"],["#6b7280","Mất tín hiệu/offline"]];
+LEG.forEach(([c,t])=>{const s=el("span");const i=el("i");i.style.background=c;s.append(i,document.createTextNode(t));$("#legend").append(s)});
+async function initMap(){
+  const m=await J("/api/map");if(!m||!m.ready||!m.url){$("#mapnote").textContent="Chưa có ảnh bản đồ. Chạy build_map.py (xem README) rồi restart.";return}
+  M.w=m.w;M.h=m.h;const img=$("#mapimg");img.onload=()=>{M.ready=true;stage.style.width=M.w+"px";stage.style.height=M.h+"px";fit();drawMarkers()};img.src=m.url;img.width=M.w;img.height=M.h;
+}
+function selectRobot(name,center){M.sel=name;drawMarkers();drawInfo();if(center){const r=M.robots.find(x=>x.name===name);if(r&&r.map)centerOn(r.map[0],r.map[1],Math.max(M.s,0.6))}}
+function worst(r){return r.preds.length?r.preds[0].level:null}
+function drawMarkers(){
+  stage.querySelectorAll(".mk").forEach(n=>n.remove());
+  M.robots.forEach(r=>{if(!r.map)return;const w=worst(r);const m=el("div","mk"+(M.sel===r.name?" sel":"")+(r.status===2?" err":"")+(w==="high"||w==="mid"?" warn":""));
+    m.style.left=r.map[0]+"px";m.style.top=r.map[1]+"px";m.style.setProperty("--c",colorOf(r));
+    const d=el("div","dot",w==="high"?"!":"");m.append(d,el("div","nm",r.name));m.onclick=ev=>{ev.stopPropagation();selectRobot(r.name,false)};
+    m.addEventListener("pointerdown",ev=>ev.stopPropagation());stage.append(m)});
+}
+function drawChips(){
+  const C=$("#chips");C.replaceChildren();
+  M.robots.forEach(r=>{const b=el("button",M.sel===r.name?"sel":"");b.style.setProperty("--c",colorOf(r));b.append(el("i"),document.createTextNode(r.name+(r.preds.length&&worst(r)!=="low"?" ⚠":"")));b.onclick=()=>selectRobot(r.name,true);C.append(b)});
+  const bad=M.robots.filter(r=>r.preds.some(p=>p.level==="high"));const A=$("#mapAlert");
+  if(bad.length){A.style.display="block";A.textContent="⚠ "+bad.map(r=>r.name+": "+r.preds.find(p=>p.level==="high").title).join("  ·  ")}else A.style.display="none";
+}
+function drawInfo(){
+  const I=$("#info");I.replaceChildren();const r=M.robots.find(x=>x.name===M.sel);
+  if(!r){I.append(el("div","mut","Chạm vào robot trên bản đồ (hoặc tên robot phía trên) để xem trạng thái và lỗi dự đoán."));return}
+  const hd=el("div","hd");const dot=el("i");dot.style.cssText="width:14px;height:14px;border-radius:50%;display:inline-block;background:"+colorOf(r);
+  hd.append(dot,el("b",null,r.name),el("span","chip "+chipClass(r),r.unseen?"Chưa có dữ liệu":r.lost?"MẤT TÍN HIỆU":r.status_name));if(r.battery!=null)hd.append(el("span","mut","Pin "+r.battery+"%"));I.append(hd);
+  const kv=(a,b)=>{if(!b)return;const d=el("div","kv");d.append(el("span",null,a+": "),document.createTextNode(b));I.append(d)};
+  kv("Vị trí",r.place||r.pos);kv("Task",r.order);if(r.age!=null)kv("Cập nhật",ago(r.age)+" trước");
+  if(!r.map&&!r.unseen)I.append(el("div","mut","Không xác định được vị trí trên bản đồ (RCS chưa gửi toạ độ và mã điểm không có trong bản đồ)."));
+  I.append(el("div","mut","Lỗi dự đoán:"));
+  if(!r.preds.length)I.append(el("div","pred low","✔ Không phát hiện lỗi"));
+  r.preds.forEach(p=>{const d=el("div","pred "+p.level);d.append(el("b",null,p.title));if(p.detail)d.append(document.createTextNode(p.detail));I.append(d)});
+}
+function refresh(){loadRobots();if(cur==="t2")loadInc();if(cur==="t3")loadTasks();if(cur==="t4"){loadSys();loadHist()}}
+initMap();refresh();setInterval(()=>{loadRobots();if(cur==="t2")loadInc();if(cur==="t3")loadTasks();if(cur==="t4")loadSys()},3000);
+</script>
+</body>
+</html>
