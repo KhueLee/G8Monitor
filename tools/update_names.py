@@ -1,5 +1,5 @@
 """Cập nhật tên điểm (ô highbay) từ file Excel mapping -> nodes.json.
-  python update_names.py "docs\\G8_mapping_Node_Highbay_20261007.xlsx"
+  python update_names.py "raw\\G8_mapping_Node_Highbay_20261007.xlsx"
   python update_names.py <file.xlsx> --check       -> chỉ kiểm tra, báo khác biệt, không ghi
 Sheet đầu tiên, dòng 1 là tiêu đề; các cột cần có: Khu, Dãy, Node, Tên RCS (name), Tầng 1..Tầng 4.
 Cần: pip install openpyxl. nodes.json cũ được sao lưu thành nodes.json.bak. Tool đang chạy tự nạp lại (không cần restart).
@@ -12,9 +12,9 @@ import shutil
 import sys
 from collections import Counter
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-CFG = json.load(open(os.path.join(HERE, "config.json"), encoding="utf-8-sig"))
-OUT = os.path.join(HERE, CFG.get("nodes_file", "nodes.json"))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # thư mục gốc project
+CFG = json.load(open(os.path.join(ROOT, "config.json"), encoding="utf-8-sig"))
+OUT = os.path.join(ROOT, CFG.get("nodes_file", "data/nodes.json"))
 COLS = {"k": "khu", "d": "dãy", "n": "node", "r": "tên rcs"}           # khóa trong nodes.json -> đầu cột Excel (khớp phần đầu, không phân biệt hoa thường)
 LEVELS = ["tầng 1", "tầng 2", "tầng 3", "tầng 4"]
 
@@ -69,7 +69,7 @@ def validate(nodes):
     if no_r:
         warn.append(f"{len(no_r)} dòng thiếu Tên RCS (vd. {', '.join(no_r[:5])})")
     try:
-        pts = json.load(open(os.path.join(HERE, CFG.get("map_dir", "map"), "points.json")))
+        pts = json.load(open(os.path.join(ROOT, CFG.get("map_dir", "data/map"), "points.json")))
         miss = [x["l"] for x in nodes if x["r"] not in pts and x["n"] not in pts]
         if miss:
             warn.append(f"{len(miss)} ô không có trên bản đồ hiện tại (vd. {', '.join(miss[:8])}) - kiểm tra mã Node/Tên RCS hoặc cập nhật bản đồ")

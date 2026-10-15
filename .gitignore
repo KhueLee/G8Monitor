@@ -4,5 +4,5 @@ __pycache__/
 *.pyc
 .venv/
 venv/
-map/backup/
-nodes.json.bak
+data/map/backup/
+data/nodes.json.bak

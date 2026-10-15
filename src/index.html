@@ -252,7 +252,7 @@ function centerOn(px,py,minZ){const W=vp.clientWidth,H=vp.clientHeight;M.s=Math.
 const LEG=[["#16a34a","Đang chạy"],["#2563eb","Rảnh"],["#7c3aed","Đang sạc"],["#dc2626","Lỗi"],["#6b7280","Mất tín hiệu/offline"]];
 LEG.forEach(([c,t])=>{const s=el("span");const i=el("i");i.style.background=c;s.append(i,document.createTextNode(t));$("#legend").append(s)});
 async function initMap(){
-  const m=await J("/api/map");if(!m||!m.ready||!m.url){$("#mapnote").textContent="Chưa có ảnh bản đồ. Chạy build_map.py (xem README) rồi restart.";return}
+  const m=await J("/api/map");if(!m||!m.ready||!m.url){$("#mapnote").textContent="Chưa có ảnh bản đồ. Chạy tools\\update_map.bat (xem README).";return}
   M.w=m.w;M.h=m.h;const img=$("#mapimg");img.onload=()=>{M.ready=true;stage.style.width=M.w+"px";stage.style.height=M.h+"px";const S=$("#routes");S.setAttribute("width",M.w);S.setAttribute("height",M.h);S.setAttribute("viewBox","0 0 "+M.w+" "+M.h);fit();drawMarkers()};img.src=m.url;img.width=M.w;img.height=M.h;
 }
 function selectRobot(name,center){M.sel=name;drawMarkers();drawInfo();if(center){const r=M.robots.find(x=>x.name===name);if(r&&r.map)centerOn(r.map[0],r.map[1],Math.max(M.s,0.6))}}

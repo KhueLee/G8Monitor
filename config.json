@@ -19,7 +19,7 @@
   "battery_low": 20,
   "alarm_active_minutes": 10,
   "alarm_dedup_sec": 300,
-  "nodes_file": "nodes.json",
+  "nodes_file": "data/nodes.json",
   "alias": {
     "0001": "LT01",
     "0002": "LT02",
@@ -36,7 +36,7 @@
     "LT05",
     "FK02"
   ],
-  "map_dir": "map",
+  "map_dir": "data/map",
   "xy_offset_mm": [
     0,
     0

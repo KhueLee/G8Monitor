@@ -8,7 +8,7 @@ echo  KHAI TRONG RCS (Third-party Service Configuration) - cong 5502:
 echo    http://192.168.110.189:5502/ics/agv-status
 echo    http://192.168.110.189:5502/ics/alarm
 echo    http://192.168.110.189:5502/ics/task-status
-echo  Neu khong vao duoc: chay firewall_open.bat (Run as administrator)
+echo  Neu khong vao duoc: chay tools\firewall_open.bat (Run as administrator)
 echo ============================================
-python main.py
+python src\main.py
 pause

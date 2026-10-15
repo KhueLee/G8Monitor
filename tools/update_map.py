@@ -1,5 +1,5 @@
 """Cập nhật bản đồ của tool khi map RCS thay đổi.
-  python update_map.py "docs\\3-map2 (29).zip"      -> file map xuất từ RCS (zip lồng zip cũng được) hoặc thư mục đã giải nén
+  python update_map.py "raw\\3-map2 (29).zip"       -> file map xuất từ RCS (zip lồng zip cũng được) hoặc thư mục đã giải nén
   python update_map.py --rcs                        -> tải map mới nhất thẳng từ RCS (API topologyList, cần rcs_api trong config.json)
   python update_map.py <file.zip> --list            -> chỉ liệt kê các map có trong file, không cập nhật
 Tuỳ chọn: --model RTA-C060 (chọn map của loại xe nào, mặc định "map_model" trong config.json), --scale 3 (hệ số thu nhỏ ảnh).
@@ -15,9 +15,9 @@ import tempfile
 import time
 import zipfile
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-CFG = json.load(open(os.path.join(HERE, "config.json"), encoding="utf-8-sig"))
-MAP_DIR = os.path.join(HERE, CFG.get("map_dir", "map"))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # thư mục gốc project
+CFG = json.load(open(os.path.join(ROOT, "config.json"), encoding="utf-8-sig"))
+MAP_DIR = os.path.join(ROOT, CFG.get("map_dir", "data/map"))
 KEEP_BACKUPS = 5
 
 
@@ -56,6 +56,7 @@ def pick(maps, model):
 
 
 def from_rcs(tmp):
+    sys.path.insert(0, os.path.join(ROOT, "src"))
     import rcs_api
     api = CFG.get("rcs_api") or {}
     data = rcs_api.call(api, "topology", {"areaId": int(api.get("area_id", 1))}) or {}
@@ -86,7 +87,7 @@ def backup():
 def check_nodes(points):
     """Báo các ô highbay trong nodes.json không có trên bản đồ mới (tên điểm/bản đồ lệch nhau)."""
     try:
-        nodes = json.load(open(os.path.join(HERE, CFG.get("nodes_file", "nodes.json")), encoding="utf-8-sig"))
+        nodes = json.load(open(os.path.join(ROOT, CFG.get("nodes_file", "data/nodes.json")), encoding="utf-8-sig"))
     except Exception:
         return
     miss = [n["l"] for n in nodes if n.get("r") not in points and n.get("n") not in points]
@@ -146,7 +147,7 @@ def main():
 
         b = backup()
         if b:
-            print("Đã sao lưu bản đồ cũ vào", os.path.relpath(b, HERE))
+            print("Đã sao lưu bản đồ cũ vào", os.path.relpath(b, ROOT))
         os.makedirs(MAP_DIR, exist_ok=True)
         for f in ("map.png", "points.json", "map_meta.json"):      # map_meta.json chép sau cùng (báo hiệu cho main.py nạp lại)
             shutil.copy2(os.path.join(out, f), os.path.join(MAP_DIR, f))

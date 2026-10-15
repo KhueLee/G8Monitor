@@ -8,10 +8,10 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 Image.MAX_IMAGE_PIXELS = None
-HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # thư mục gốc project
 
 
-def build(src, F=3, out=os.path.join(HERE, "map")):
+def build(src, F=3, out=os.path.join(ROOT, "data", "map")):
     """Dựng map.png, map_meta.json, points.json từ thư mục có topo.json + .yaml + .pgm."""
     os.makedirs(out, exist_ok=True)
 

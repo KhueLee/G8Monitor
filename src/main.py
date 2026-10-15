@@ -17,9 +17,10 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse
 from starlette.routing import Route
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-CFG = json.load(open(os.environ.get("MON_CONFIG") or os.path.join(HERE, "config.json"), encoding="utf-8-sig"))
-LOG_DIR = CFG["log_dir"] if os.path.isabs(CFG["log_dir"]) else os.path.join(HERE, CFG["log_dir"])
+HERE = os.path.dirname(os.path.abspath(__file__))                    # src/
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # thư mục gốc project
+CFG = json.load(open(os.environ.get("MON_CONFIG") or os.path.join(ROOT, "config.json"), encoding="utf-8-sig"))
+LOG_DIR = CFG["log_dir"] if os.path.isabs(CFG["log_dir"]) else os.path.join(ROOT, CFG["log_dir"])
 START = time.time()
 
 ALARM_TYPES = {1: "Robot mất kết nối", 2: "Thiết bị hỏng", 3: "Pin yếu", 4: "AMR lỗi", 5: "Nâng cấp lỗi", 6: "Node lỗi", 8: "Lỗi dẫn đường",
@@ -33,15 +34,15 @@ TASK_STATUS = {3: "Đã hủy", 5: "Gửi lỗi", 6: "Đang chạy", 7: "Chạy 
                20: "Đang lấy hàng", 21: "Đã lấy hàng", 22: "Đang trả hàng", 23: "Đã trả hàng"}
 
 # ---------------------------------------------------------------- tra mã điểm (file highbay) + bản đồ + gợi ý lỗi
-NODES_FILE = os.path.join(HERE, CFG.get("nodes_file", "nodes.json"))
-MAP_DIR = os.path.join(HERE, CFG.get("map_dir", "map"))
+NODES_FILE = os.path.join(ROOT, CFG.get("nodes_file", "data/nodes.json"))
+MAP_DIR = os.path.join(ROOT, CFG.get("map_dir", "data/map"))
 BY_CODE, BY_LOC = {}, {}
 HINTS = {"codes": {}, "types": {}}
 POINTS, MAP = {}, None
 CELLS = []                       # [(x_mm, y_mm, nhãn ô, khu)] toạ độ các ô highbay (lấy từ topo qua points.json)
 LOADED = {}                      # file -> mtime lúc nạp, để tự nạp lại khi update_map.py / update_names.py ghi file mới
 try:
-    HINTS = json.load(open(os.path.join(HERE, "hints.json"), encoding="utf-8-sig"))
+    HINTS = json.load(open(os.path.join(ROOT, "data", "hints.json"), encoding="utf-8-sig"))
 except Exception:
     pass
 
@@ -473,7 +474,7 @@ def on_topology(data):
         os.makedirs(LOG_DIR, exist_ok=True)
         json.dump(rec, open(TOPO_STATE, "w", encoding="utf-8"))
         if old:
-            incident("system", "mid", "Map RCS đã thay đổi", f"mapId {rec['map_id']}. Cập nhật bản đồ tool: chạy update_map.py --rcs (hoặc update_map.py <file zip xuất từ RCS>).")
+            incident("system", "mid", "Map RCS đã thay đổi", f"mapId {rec['map_id']}. Cập nhật bản đồ tool: chạy tools\\update_map.bat (hoặc kéo thả file zip xuất từ RCS vào đó).")
 
 
 def rcs_fetch(kind, body):
