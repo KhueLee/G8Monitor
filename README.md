@@ -2,6 +2,25 @@
 
 RCS/ICS **tự đẩy** dữ liệu lên tool này (trạng thái robot, cảnh báo, task). Nếu khai `rcs_api`, tool còn **tự hỏi RCS** đường đi robot, danh sách task và bản đồ. Tool lưu log theo ngày và hiển thị trên web tiếng Việt (dùng được trên điện thoại).
 
+## Cài Git và tải tool về máy client (PC chạy tool)
+1. **Cài Git**: tải Git for Windows tại https://git-scm.com/download/win (bản 64-bit), chạy file cài, để mặc định và bấm Next đến hết. Ở bước "Adjusting your PATH environment" giữ lựa chọn **Git from the command line and also from 3rd-party software**.
+   Nếu máy có `winget` thì chỉ cần chạy trong cmd/PowerShell: `winget install --id Git.Git -e`
+2. Mở cmd **mới** và kiểm tra: `git --version` (hiện `git version 2.x...` là được).
+3. Khai tên người dùng (một lần): `git config --global user.name "Ten"` và `git config --global user.email "email@congty.com"`.
+4. **Tải tool về** (vd. vào `C:\G8Monitor`):
+   ```
+   cd /d C:\
+   git clone https://github.com/KhueLee/G8Monitor.git
+   cd G8Monitor
+   ```
+   Repo riêng tư thì Git sẽ mở cửa sổ đăng nhập GitHub (chọn **Sign in with your browser**), đăng nhập một lần là Git nhớ.
+5. Cài Python 3 (https://www.python.org/downloads/, tích **Add python.exe to PATH** khi cài) rồi làm tiếp phần **Cài và chạy** bên dưới.
+
+**Cập nhật bản mới**: tắt tool (đóng cửa sổ `start.bat`), rồi trong thư mục tool chạy `git pull`, sau đó chạy lại `start.bat`.
+- Nếu đã sửa `config.json` (alias, rcs_api...) trên máy client, `git pull` có thể báo lỗi xung đột. Cách xử lý: `git stash` → `git pull` → `git stash pop` (giữ lại cấu hình đã sửa). Nếu vẫn xung đột thì mở `config.json` sửa lại tay.
+- Xem đã sửa gì trên máy: `git status`, `git diff`. Bỏ hết thay đổi trên máy, về đúng bản trên GitHub: `git checkout -- .` (cẩn thận, mất cấu hình đã sửa).
+- Thư mục `logs` không đưa lên git nên `git pull` không ảnh hưởng log.
+
 ## Cài và chạy
 1. `pip install -r requirements.txt` (chạy tool chỉ cần `starlette uvicorn`; `pillow numpy openpyxl` dùng cho công cụ cập nhật bản đồ/tên điểm)
 2. Chạy `start.bat`. **Xem giao diện: `http://192.168.110.189:5503`** (cổng web). **RCS đẩy dữ liệu vào cổng 5502** (cổng nhận, tách riêng khỏi web).
