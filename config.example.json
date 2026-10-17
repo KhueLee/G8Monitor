@@ -12,7 +12,9 @@
   },
   "log_dir": "logs",
   "retention_days": 30,
-  "log_raw": false,
+  "log_push": true,
+  "log_api": true,
+  "_log_note": "log_push: lưu nguyên mọi bản tin RCS đẩy lên (push.jsonl). log_api: lưu nguyên mọi phản hồi API RCS tool hỏi (api.jsonl). Hai file này lớn nhất, đặt false nếu ổ đĩa đầy.",
   "agv_log_interval_sec": 30,
   "robot_stale_sec": 60,
   "silence_warn_sec": 120,
@@ -50,15 +52,15 @@
   "map_model": "RTA-C060",
   "_map_model_note": "update_map.py dùng map của loại xe này khi file map RCS có nhiều loại (RTA-C060, RTA-C100, RTA-FD200...).",
   "rcs_api": {
-    "base": "",
-    "area_id": 1,
+    "enabled": true,
+    "base": "http://192.168.110.100:7000",
+    "area_id": 2,
     "user": "",
     "password": "",
     "path_sec": 5,
     "order_sec": 30,
     "order_page_size": 50,
-    "topology_min": 60,
     "timeout_sec": 8
   },
-  "_rcs_api_note": "Tool tự hỏi RCS: getRobotTaskPath (đường đi, mỗi path_sec giây), getOrderList (task, mỗi order_sec giây), topologyList (map, mỗi topology_min phút). base = http://<IP máy RCS>:7000, để trống là tắt. area_id = Area ID trên RCS. user/password chỉ cần khi RCS bật xác thực WSSE. Đặt 0 để tắt từng loại."
+  "_rcs_api_note": "Tool tự hỏi RCS (mặc định bật): getRobotTaskPath (đường đi, mỗi path_sec giây), getOrderList (task, mỗi order_sec giây). topologyList chỉ gọi khi bấm nút Tải map ở tab Hệ thống. base = http://<IP máy RCS>:7000, area_id = Area ID trên RCS. enabled=false để tắt hẳn. user/password chỉ cần khi RCS bật xác thực WSSE; RCS từ chối thì giao diện web hiện cửa sổ nhập và tự lưu vào config.json. Đặt 0 để tắt từng loại."
 }

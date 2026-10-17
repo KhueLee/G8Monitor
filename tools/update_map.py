@@ -16,10 +16,10 @@ import time
 import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # thư mục gốc project
-CFG_PATH = os.path.join(ROOT, "config.json")
-if not os.path.exists(CFG_PATH):                                     # máy mới clone: tạo config.json từ mẫu
-    shutil.copy(os.path.join(ROOT, "config.example.json"), CFG_PATH)
-CFG = json.load(open(CFG_PATH, encoding="utf-8-sig"))
+sys.path.insert(0, os.path.join(ROOT, "src"))
+import cfg  # noqa: E402
+
+CFG = cfg.load()                                                     # config.example.json + config.json của máy
 MAP_DIR = os.path.join(ROOT, CFG.get("map_dir", "data/map"))
 KEEP_BACKUPS = 5
 
@@ -59,10 +59,20 @@ def pick(maps, model):
 
 
 def from_rcs(tmp):
-    sys.path.insert(0, os.path.join(ROOT, "src"))
+    import getpass
     import rcs_api
     api = CFG.get("rcs_api") or {}
-    data = rcs_api.call(api, "topology", {"areaId": int(api.get("area_id", 1))}) or {}
+    while True:
+        try:
+            data = rcs_api.call(api, "topology", {"areaId": int(api.get("area_id", 1))}) or {}
+            break
+        except rcs_api.RcsAuthError as e:                            # RCS bật xác thực: hỏi user/password rồi lưu vào config.json
+            print(e)
+            user = input("User RCS (Enter để thoát): ").strip()
+            if not user:
+                raise SystemExit("Đã huỷ.")
+            api.update(user=user, password=getpass.getpass("Password RCS: "))
+            cfg.save_rcs_auth(api["user"], api["password"])
     url = data.get("mapZipUrl")
     if not url:
         raise SystemExit(f"RCS không trả mapZipUrl (trả về: {data})")

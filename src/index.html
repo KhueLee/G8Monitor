@@ -8,17 +8,26 @@
 <style>
 :root{--g:#0f766e;--bg:#f3f5f7;--card:#fff;--line:#e2e6ea;--tx:#1b2430;--mut:#6b7684;--red:#c2261c;--ok:#157f3b;--amb:#b45309}
 *{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
-body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding-bottom:84px}
-header{background:var(--g);color:#fff;padding:10px 16px;position:sticky;top:0;z-index:5}
-header h1{margin:0;font-size:18px;display:flex;justify-content:space-between;align-items:center}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding-bottom:16px}
+header{background:var(--g);color:#fff;padding:8px 16px;position:sticky;top:0;z-index:7}
+header h1{margin:0;font-size:18px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+#menuBtn{border:0;background:rgba(255,255,255,.16);color:#fff;font:inherit;font-weight:700;border-radius:10px;padding:6px 12px;min-height:44px;display:flex;align-items:center;gap:8px;position:relative;cursor:pointer}
+#menuBtn .car{font-size:12px;opacity:.85;transition:transform .15s}#menuBtn[aria-expanded=true] .car{transform:rotate(180deg)}
+#menu{position:absolute;left:12px;top:calc(100% - 2px);background:#fff;color:var(--tx);border:1px solid var(--line);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);min-width:230px;max-width:calc(100vw - 24px);max-height:70vh;overflow-y:auto;padding:6px}
+#menu button{display:flex;align-items:center;gap:10px;width:100%;border:0;background:none;font:inherit;font-size:16px;text-align:left;padding:10px 12px;border-radius:8px;min-height:44px;cursor:pointer;color:var(--tx)}
+#menu button:hover{background:#f1f5f9}#menu button.active{background:#e6f2f0;color:var(--g);font-weight:700}
+#menu button b{width:24px;text-align:center}
+.dot{background:var(--red);color:#fff;border-radius:99px;font-size:11px;min-width:18px;padding:0 5px;line-height:18px;text-align:center;font-weight:700}
+#menuBtn .dot{position:absolute;top:-4px;right:-6px}#menu .dot{margin-left:auto}
+dialog{border:0;border-radius:14px;padding:16px;width:min(380px,calc(100vw - 32px));box-shadow:0 12px 40px rgba(0,0,0,.3)}
+dialog::backdrop{background:rgba(15,23,42,.45)}
+dialog h3{margin:0 0 6px;font-size:18px}dialog label{display:block;font-size:14px;margin-top:10px;color:var(--mut)}
+dialog input{width:100%;margin-top:4px}dialog .acts{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+button.sm.pri{background:var(--g);color:#fff}
 #conn{font-size:12px;font-weight:600;padding:3px 10px;border-radius:99px;background:rgba(255,255,255,.2)}
 #conn.bad{background:#c2261c}#conn.ok{background:#157f3b}
 main{max-width:900px;margin:0 auto;padding:12px}
 .tab{display:none}.tab.active{display:block}
-nav{position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:1px solid var(--line);display:flex;z-index:6;padding-bottom:env(safe-area-inset-bottom)}
-nav button{flex:1;border:0;background:none;padding:9px 0 8px;font-size:11px;color:var(--mut);display:flex;flex-direction:column;align-items:center;gap:2px;min-height:56px;position:relative}
-nav button b{font-size:20px;line-height:1}nav button.active{color:var(--g);font-weight:700}
-nav .dot{position:absolute;top:4px;right:calc(50% - 22px);background:var(--red);color:#fff;border-radius:99px;font-size:11px;min-width:18px;padding:0 5px;line-height:18px}
 .sum{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
 .sum div{background:#fff;border:1px solid var(--line);border-radius:12px;padding:8px 4px;text-align:center}
 .sum b{display:block;font-size:22px}.sum small{color:var(--mut);font-size:12px}
@@ -48,13 +57,13 @@ table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:6px;borde
 pre{margin:0;white-space:pre-wrap;word-break:break-all;font-size:12px}
 a{color:var(--g)}
 .mapwrap{position:relative;background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden}
-#vp{position:relative;height:calc(100vh - 360px);min-height:300px;touch-action:none;cursor:grab;background:#fdfdfd;user-select:none;-webkit-user-select:none}
+#vp{position:relative;height:calc(100vh - 300px);min-height:300px;touch-action:none;cursor:grab;background:#fdfdfd;user-select:none;-webkit-user-select:none}
 #vp.drag{cursor:grabbing}
 #stage{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}
 #stage img{display:block;max-width:none;pointer-events:none;-webkit-user-drag:none}
 #routes{position:absolute;left:0;top:0;pointer-events:none;z-index:1;overflow:visible}
 .mk{position:absolute;transform:translate(-50%,-50%) scale(var(--inv,1));display:flex;flex-direction:column;align-items:center;cursor:pointer;z-index:2}
-.mk .dot{width:26px;height:26px;border-radius:50%;border:3px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.55);background:var(--c);display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:800}
+.mk .dot{line-height:normal;min-width:0;padding:0;width:26px;height:26px;border-radius:50%;border:3px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.55);background:var(--c);display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:800}
 .mk .nm{margin-top:2px;font-size:12px;font-weight:700;background:rgba(255,255,255,.92);border:1px solid #cbd5e1;border-radius:6px;padding:0 4px;white-space:nowrap}
 .mk.sel .dot{outline:4px solid #facc15}.mk.sel{z-index:4}
 .mk.warn .dot{box-shadow:0 0 0 3px #f59e0b,0 1px 5px rgba(0,0,0,.55)}
@@ -79,7 +88,15 @@ a{color:var(--g)}
 </style>
 </head>
 <body>
-<header><h1><span>🤖 G8 Monitor</span><span id="conn">…</span></h1></header>
+<header><h1><button id="menuBtn" aria-haspopup="true" aria-expanded="false"><span id="curName">🗺️ Bản đồ</span><span class="car">▼</span><span class="dot" id="dotBtn" hidden></span></button><span id="conn">…</span></h1>
+  <div id="menu" hidden>
+    <button class="active" data-t="t0"><b>🗺️</b>Bản đồ</button>
+    <button data-t="t1"><b>🤖</b>Robot</button>
+    <button data-t="t2"><b>🚨</b>Sự cố<span class="dot" id="dot" hidden></span></button>
+    <button data-t="t3"><b>📋</b>Task</button>
+    <button data-t="t4"><b>⚙️</b>Hệ thống</button>
+  </div>
+</header>
 <main>
 
 <section class="tab active" id="t0">
@@ -121,20 +138,26 @@ a{color:var(--g)}
   <h2>⚙️ Kết nối với RCS</h2><div id="sys"></div>
   <h2>🔄 Tool hỏi RCS định kỳ</h2><div id="api"></div>
   <h2>🗂 Nhật ký theo ngày</h2>
-  <div class="bar"><input type="date" id="hDate"><select id="hKind"><option value="incident">Sự cố</option><option value="alarm">Cảnh báo</option><option value="task">Task</option><option value="agv">Robot</option><option value="path">Đường đi robot</option><option value="order">Task (getOrderList)</option><option value="topology">Bản đồ RCS</option><option value="raw">Dữ liệu lỗi/thô</option></select>
+  <div class="bar"><input type="date" id="hDate"><select id="hKind"><option value="incident">Sự cố</option><option value="alarm">Cảnh báo</option><option value="task">Task</option><option value="agv">Robot</option><option value="path">Đường đi robot</option><option value="order">Task (getOrderList)</option><option value="push">RCS đẩy lên (nguyên bản tin)</option><option value="api">API RCS trả về (nguyên phản hồi)</option><option value="raw">Dữ liệu lỗi/không đọc được</option></select>
   <input id="hQ" placeholder="Tìm (vd. LT03, 8039)"><button class="sm" id="hGo">Xem</button></div>
   <div class="tw"><table id="hist"></table></div>
+  <h2>🗺️ Tải map từ RCS</h2>
+  <div class="mut" style="margin:-4px 2px 8px">Tải file map hiện tại của RCS (area đang khai) về máy này. File zip dùng để cập nhật bản đồ tool (kéo thả vào tools\update_map.bat).</div>
+  <div class="bar"><button class="sm" id="mapBtn">⬇️ Tải map (.zip)</button></div>
+  <div class="mut" id="mapDl"></div>
   <h2>⬇️ Tải file log</h2><div id="files"></div>
 </section>
 </main>
 
-<nav id="nav">
-  <button class="active" data-t="t0"><b>🗺️</b>Bản đồ</button>
-  <button data-t="t1"><b>🤖</b>Robot</button>
-  <button data-t="t2"><b>🚨</b>Sự cố<span class="dot" id="dot" hidden></span></button>
-  <button data-t="t3"><b>📋</b>Task</button>
-  <button data-t="t4"><b>⚙️</b>Hệ thống</button>
-</nav>
+<dialog id="authDlg">
+  <form method="dialog">
+    <h3>🔐 RCS yêu cầu đăng nhập</h3>
+    <div class="mut" id="authMsg"></div>
+    <label>User<input id="authUser" autocomplete="username" required></label>
+    <label>Password<input id="authPw" type="password" autocomplete="current-password"></label>
+    <div class="acts"><button class="sm" value="cancel" formnovalidate>Để sau</button><button class="sm pri" value="save">Lưu và thử lại</button></div>
+  </form>
+</dialog>
 
 <script>
 const $=s=>document.querySelector(s);
@@ -142,9 +165,18 @@ const el=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=nu
 const J=async u=>{try{const r=await fetch(u);return await r.json()}catch(e){return null}};
 function ago(s){if(s==null)return"chưa có";s=Math.round(s);return s<60?s+" giây":s<3600?Math.floor(s/60)+" phút":Math.floor(s/3600)+" giờ "+Math.floor(s%3600/60)+" phút"}
 let cur="t0";
-$("#nav").onclick=e=>{const b=e.target.closest("button");if(!b)return;cur=b.dataset.t;
-  document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("active",x===b));
-  document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("active",x.id===cur));scrollTo(0,0);if(cur==="t0")setTimeout(fit,50);refresh()};
+// Menu sổ xuống chọn giao diện (thêm giao diện mới: thêm 1 <button data-t> trong #menu và 1 <section class="tab">)
+const menu=$("#menu"),menuBtn=$("#menuBtn");
+function openMenu(o){menu.hidden=!o;menuBtn.setAttribute("aria-expanded",o)}
+function showTab(t){const b=menu.querySelector(`[data-t="${t}"]`);if(!b)return;cur=t;
+  menu.querySelectorAll("button").forEach(x=>x.classList.toggle("active",x===b));
+  $("#curName").textContent=b.querySelector("b").textContent+" "+b.childNodes[1].textContent;
+  document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("active",x.id===cur));
+  try{localStorage.setItem("tab",t)}catch(e){}scrollTo(0,0);if(cur==="t0")setTimeout(fit,50);refresh()}
+menuBtn.onclick=e=>{e.stopPropagation();openMenu(menu.hidden)};
+menu.onclick=e=>{const b=e.target.closest("button");if(!b)return;openMenu(false);showTab(b.dataset.t)};
+document.addEventListener("click",e=>{if(!menu.hidden&&!menu.contains(e.target))openMenu(false)});
+document.addEventListener("keydown",e=>{if(e.key==="Escape")openMenu(false)});
 
 function chipClass(r){if(r.unseen)return"";if(r.lost||r.status===0)return"off";return{1:"idle",2:"err",4:"run",5:"chg"}[r.status]||""}
 function routeText(r){const t=r.route;return t?t.count+" điểm → "+t.to+(t.to_place?" ("+t.to_place+")":""):""}
@@ -169,8 +201,19 @@ async function loadRobots(){
   M.robots=s.robots;if(M.ready)drawMarkers();drawChips();drawInfo();
   const R=$("#robots");R.replaceChildren();s.robots.forEach(r=>R.append(robotCard(r)));
   if(!s.robots.length)R.append(el("div","empty","Chưa có robot nào báo trạng thái.\nKiểm tra RCS đã khai URL /ics/agv-status chưa."));
-  const dot=$("#dot"),n=m.fault+m.active_alarms;dot.hidden=!n;dot.textContent=n;
+  const n=m.fault+m.active_alarms;["#dot","#dotBtn"].forEach(q=>{const d=$(q);d.hidden=!n;d.textContent=n});
+  checkAuth(s.auth);
 }
+// RCS đòi user/password -> hiện cửa sổ nhập. Bấm "Để sau" thì 10 phút sau mới hỏi lại.
+let authSkip=0;
+function checkAuth(a,force){const D=$("#authDlg");if(!a||D.open)return;
+  if(!force&&(!a.need||Date.now()-authSkip<600000))return;
+  $("#authMsg").textContent=(a.need?"RCS từ chối: "+a.err+". ":"")+"Nhập user/password của hệ thống RCS (hỏi người quản trị RCS). Tool lưu vào config.json của máy này.";
+  $("#authUser").value=a.user||"";$("#authPw").value="";D.returnValue="";D.showModal()}
+$("#authDlg").addEventListener("close",async()=>{const D=$("#authDlg");
+  if(D.returnValue!=="save"){authSkip=Date.now();return}
+  const r=await fetch("/api/rcs-auth",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user:$("#authUser").value,password:$("#authPw").value})}).catch(()=>null);
+  if(!r||!r.ok)alert("Không lưu được user/password");authSkip=0;refresh()});
 async function loadInc(){
   const r=await J("/api/incidents?hours="+$("#hrs").value);if(!r)return;
   const A=$("#active");A.replaceChildren();
@@ -192,7 +235,7 @@ async function loadTasks(){
     if(bits)d.append(el("div",null,bits));d.append(el("div","t",e.time));T.append(d)});
   if(!r.events.length)T.append(el("div","empty","Chưa nhận trạng thái task nào"));
   const o=r.orders,O=$("#orders"),N=$("#ordNote");O.replaceChildren();
-  if(!o.on){N.textContent="Chưa bật: khai rcs_api.base trong config.json để tool hỏi RCS danh sách task (getOrderList).";return}
+  if(!o.on){N.textContent="Đang tắt hỏi RCS danh sách task (getOrderList): xem rcs_api trong config.json.";return}
   N.textContent=(o.err?"⚠ Lỗi lần gọi gần nhất: "+o.err+" · ":"")+(o.ts?"Cập nhật "+o.ts+" · "+o.active.length+" task chưa xong trong "+o.shown+" task mới nhất"+(o.total!=null?" (RCS có "+o.total+")":""):"Đang chờ lần hỏi đầu tiên…");
   o.active.forEach(t=>{const bad=t.status===5||t.status===7;const d=el("div","inc "+(bad?"high":t.status===6?"low":"mid"));
     d.append(el("b",null,t.status_name+" · "+(t.order||"(không mã)")));
@@ -208,11 +251,12 @@ async function loadSys(){
   S.append(el("div","mut","Cổng nhận dữ liệu RCS: "+r.rcs_url+"  ·  Cổng xem web: "+r.web_url));
   S.append(el("div","mut","Bản đồ: "+r.map.points+" điểm"+(r.map.source?" · dựng từ "+r.map.source:"")+(r.map.built?" lúc "+r.map.built:"")));
   const A=$("#api");A.replaceChildren();
-  if(!r.api.on)A.append(el("div","inc mid","Chưa bật. Khai rcs_api.base (vd. http://IP-RCS:7000) trong config.json rồi chạy lại start.bat."));
+  if(!r.api.on)A.append(el("div","inc mid","Đang tắt (rcs_api.enabled=false trong config.json)."));
   else Object.values(r.api.items).forEach(v=>{const d=el("div","inc "+(v.every<=0?"":v.fail?"high":v.ago==null?"mid":"low"));
     d.append(el("b",null,v.name),el("div",null,v.every<=0?"Đã tắt":(v.ago==null?"Chưa gọi được lần nào":"Lần cuối "+ago(v.ago)+" trước · "+v.count+" lần")+" · mỗi "+ago(v.every)));
     if(v.err)d.append(el("div","mut","Lỗi: "+v.err));A.append(d)});
-  if(r.api.on)A.append(el("div","mut",r.api.base+" · area "+r.api.area_id));S.append(el("div","mut","Tool chạy "+ago(r.uptime)+" · giữ log "+r.retention_days+" ngày · bảng điểm highbay: "+r.nodes+" mã"));
+  if(r.api.on){A.append(el("div","mut",r.api.base+" · area "+r.api.area_id+" · xác thực: "+(r.api.user?"user "+r.api.user:"không dùng")));
+    const b=el("button","sm",r.api.user?"Đổi user/password RCS":"Nhập user/password RCS");b.style.marginTop="6px";b.onclick=async()=>{const s=await J("/api/state");checkAuth(s&&s.auth,true)};A.append(b)}S.append(el("div","mut","Tool chạy "+ago(r.uptime)+" · giữ log "+r.retention_days+" ngày · bảng điểm highbay: "+r.nodes+" mã"));
   const F=$("#files");F.replaceChildren();
   r.days.forEach(d=>{const p=el("div","kv");p.append(el("b",null,d.date+": "));d.files.forEach(f=>{const a=el("a",null,f.name.replace(".jsonl","")+" ("+f.kb+" KB)");a.href="/logs/"+d.date+"/"+f.name;a.style.marginRight="10px";p.append(a)});F.append(p)});
 }
@@ -223,7 +267,16 @@ async function loadHist(){
     const c={...x};delete c.time;delete c.ts;p.textContent=Object.entries(c).filter(([k,v])=>v!==""&&v!=null).map(([k,v])=>k+"="+(typeof v==="object"?JSON.stringify(v):v)).join("  ");b.append(p);tr.append(t,b);H.append(tr)});
   if(!r.rows.length)H.append(el("tr",null,"Không có dữ liệu"));
 }
-$("#hGo").onclick=loadHist;$("#hrs").onchange=loadInc;$("#lvl").onchange=loadInc;
+$("#hGo").onclick=loadHist;
+$("#mapBtn").onclick=async()=>{const N=$("#mapDl"),b=$("#mapBtn");
+  b.disabled=true;N.textContent="Đang hỏi RCS và tải map…";
+  try{const r=await fetch("/api/rcs-map");
+    if(!r.ok){const e=await r.json().catch(()=>({}));N.textContent="⚠ "+(e.error||"Lỗi "+r.status);if(e.auth){const s=await J("/api/state");checkAuth(s&&s.auth,true)}return}
+    const blob=await r.blob(),m=/filename="([^"]+)"/.exec(r.headers.get("Content-Disposition")||""),a=el("a");
+    a.href=URL.createObjectURL(blob);a.download=m?m[1]:"rcs_map.zip";document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),10000);
+    N.textContent="✔ Đã tải "+a.download+" ("+Math.round(blob.size/1024)+" KB)"}
+  catch(e){N.textContent="⚠ Không tải được: "+e}finally{b.disabled=false}};
+$("#hrs").onchange=loadInc;$("#lvl").onchange=loadInc;
 $("#hDate").value=new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
 
 // ================= BẢN ĐỒ =================
@@ -294,7 +347,7 @@ function drawInfo(){
   r.preds.forEach(p=>{const d=el("div","pred "+p.level);d.append(el("b",null,p.title));if(p.detail)d.append(document.createTextNode(p.detail));I.append(d)});
 }
 function refresh(){loadRobots();if(cur==="t2")loadInc();if(cur==="t3")loadTasks();if(cur==="t4"){loadSys();loadHist()}}
-initMap();refresh();setInterval(()=>{loadRobots();if(cur==="t2")loadInc();if(cur==="t3")loadTasks();if(cur==="t4")loadSys()},3000);
+initMap();{let t="t0";try{t=localStorage.getItem("tab")||t}catch(e){}if(t!=="t0")showTab(t);else refresh()}setInterval(()=>{loadRobots();if(cur==="t2")loadInc();if(cur==="t3")loadTasks();if(cur==="t4")loadSys()},3000);
 </script>
 </body>
 </html>

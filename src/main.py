@@ -14,15 +14,15 @@ from contextlib import asynccontextmanager
 import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse
+from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Route
 
+import cfg
+import rcs_api
+
 HERE = os.path.dirname(os.path.abspath(__file__))                    # src/
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # thư mục gốc project
-CFG_PATH = os.environ.get("MON_CONFIG") or os.path.join(ROOT, "config.json")
-if not os.path.exists(CFG_PATH):                                     # máy mới clone: tạo config.json từ mẫu
-    shutil.copy(os.path.join(ROOT, "config.example.json"), CFG_PATH)
-CFG = json.load(open(CFG_PATH, encoding="utf-8-sig"))
+ROOT = cfg.ROOT                                                      # thư mục gốc project
+CFG = cfg.load()                                                     # config.example.json + config.json của máy
 LOG_DIR = CFG["log_dir"] if os.path.isabs(CFG["log_dir"]) else os.path.join(ROOT, CFG["log_dir"])
 START = time.time()
 
@@ -398,17 +398,17 @@ def handle_task(d):
                  f"{ev['error']} · Robot {ev['device'] or '?'} · Điểm {ev['point']} {ev['point_place']}".strip(" ·"), ev["device"])
 
 
-# ---------------------------------------------------------------- hỏi RCS định kỳ (getRobotTaskPath, getOrderList, topologyList)
+# ---------------------------------------------------------------- hỏi RCS định kỳ (getRobotTaskPath, getOrderList); topologyList chỉ gọi khi bấm nút tải map
 API = CFG.get("rcs_api") or {}
-API_ON = bool(API.get("base"))
-API_NAMES = {"path": "getRobotTaskPath (đường đi robot)", "order": "getOrderList (danh sách task)", "topology": "topologyList (bản đồ RCS)"}
-API_EVERY = {"path": float(API.get("path_sec", 5)), "order": float(API.get("order_sec", 30)), "topology": float(API.get("topology_min", 60)) * 60}
+API_ON = bool(API.get("base")) and API.get("enabled", True) is not False
+AUTH = {"need": False, "ts": 0, "err": ""}   # RCS đòi user/password -> giao diện hiện cửa sổ nhập
+API_NAMES = {"path": "getRobotTaskPath (đường đi robot)", "order": "getOrderList (danh sách task)"}
+API_EVERY = {"path": float(API.get("path_sec", 5)), "order": float(API.get("order_sec", 30))}
 API_ST = {k: {"ok": 0, "try": 0, "count": 0, "err": "", "fail": False} for k in API_NAMES}
 ORDER_STATUS = {1: "Chưa gửi", 2: "Đang hủy", 3: "Đã hủy", 4: "Đang gửi", 5: "Gửi lỗi", 6: "Đang chạy", 7: "Chạy lỗi", 8: "Hoàn thành", 9: "Đã giao xe"}
 ROUTES = {}                      # tên robot -> {"nodes": [[mã, x, y], ...], "ts", "area"}
 ORDERS = {"list": [], "ts": 0, "total": None}
 ORDER_SEEN = {}                  # orderId -> trạng thái đã ghi log (chỉ ghi khi đổi)
-TOPO_STATE = os.path.join(LOG_DIR, "topology_state.json")
 
 
 def parse_path_node(v):
@@ -462,41 +462,42 @@ def on_orders(data):
             ORDER_SEEN.pop(k, None)
 
 
-def on_topology(data):
-    """So mã băm file map RCS với lần trước: khác nghĩa là map RCS đã đổi -> nhắc cập nhật bản đồ tool."""
-    data = data or {}
-    digest = data.get("_hash", "")
-    try:
-        old = json.load(open(TOPO_STATE, encoding="utf-8"))
-    except Exception:
-        old = {}
-    rec = {"time": now_s(), "map_id": data.get("mapId"), "hash": digest, "zip_url": (data.get("mapZipUrl") or "").split("?")[0],
-           "json_url": (data.get("mapJsonUrl") or "").split("?")[0]}
-    if old.get("hash") != digest or old.get("map_id") != rec["map_id"]:
-        write_log("topology", {**rec, "changed": bool(old)})
-        os.makedirs(LOG_DIR, exist_ok=True)
-        json.dump(rec, open(TOPO_STATE, "w", encoding="utf-8"))
-        if old:
-            incident("system", "mid", "Map RCS đã thay đổi", f"mapId {rec['map_id']}. Cập nhật bản đồ tool: chạy tools\\update_map.bat (hoặc kéo thả file zip xuất từ RCS vào đó).")
-
-
 def rcs_fetch(kind, body):
-    """Chạy trong luồng phụ (gọi mạng). topologyList chỉ trả URL nên tải luôn file map JSON để lấy mã băm."""
-    import hashlib
-    import rcs_api
-    data = rcs_api.call(API, kind, body)
-    if kind == "topology":
-        data = dict(data or {})
-        url = data.get("mapJsonUrl") or data.get("mapZipUrl") or ""
-        data["_hash"] = hashlib.sha1(rcs_api.download(url)).hexdigest() if url else ""
-    return data
+    """Chạy trong luồng phụ (gọi mạng). Mọi lần gọi (kể cả lỗi) ghi nguyên phản hồi RCS vào api.jsonl nếu bật log_api."""
+    trace = {}
+    try:
+        return rcs_api.call(API, kind, body, trace)
+    except Exception as e:
+        trace["error"] = str(e)[:500]
+        raise
+    finally:
+        if CFG.get("log_api", True):
+            write_log("api", {"time": now_s(), "api": kind, **trace})
+
+
+def rcs_map_fetch():
+    """Nút "Tải map từ RCS": gọi topologyList lấy link, tải file map zip (mapZipUrl). Trả về (tên file, nội dung)."""
+    data = rcs_fetch("topology", {"areaId": int(API.get("area_id", 1))}) or {}
+    url = data.get("mapZipUrl") or ""
+    if not url:
+        raise rcs_api.RcsError(f"RCS không trả link map zip (trả về: {json.dumps(data, ensure_ascii=False)[:300]})")
+    trace = {"url": url.split("?")[0]}
+    try:
+        blob = rcs_api.download(url)
+        trace["bytes"] = len(blob)
+        return f"rcs_map_area{API.get('area_id')}_{time.strftime('%Y%m%d-%H%M')}.zip", blob
+    except Exception as e:
+        trace["error"] = str(e)[:500]
+        raise rcs_api.RcsError(f"không tải được file map {trace['url']}: {e}") from e
+    finally:
+        if CFG.get("log_api", True):
+            write_log("api", {"time": now_s(), "api": "map_download", "map_id": data.get("mapId"), **trace})
 
 
 async def rcs_poller():
-    handlers = {"path": on_paths, "order": on_orders, "topology": on_topology}
+    handlers = {"path": on_paths, "order": on_orders}
     bodies = {"path": {"areaId": int(API.get("area_id", 1))},
-              "order": {"areaId": int(API.get("area_id", 1)), "StartPage": "1", "pageSize": str(API.get("order_page_size", 50))},
-              "topology": {"areaId": int(API.get("area_id", 1))}}
+              "order": {"areaId": int(API.get("area_id", 1)), "StartPage": "1", "pageSize": str(API.get("order_page_size", 50))}}
     while True:
         for kind, st in API_ST.items():
             if API_EVERY[kind] <= 0 or time.time() - st["try"] < API_EVERY[kind]:
@@ -506,11 +507,14 @@ async def rcs_poller():
                 data = await asyncio.to_thread(rcs_fetch, kind, bodies[kind])
                 handlers[kind](data)
                 st.update(ok=time.time(), count=st["count"] + 1, err="")
+                AUTH["need"] = False
                 if st["fail"]:
                     st["fail"] = False
                     incident("system", "low", f"Gọi được API RCS {API_NAMES[kind]} trở lại")
             except Exception as e:
                 st["err"] = str(e)[:300]
+                if isinstance(e, rcs_api.RcsAuthError):
+                    AUTH.update(need=True, ts=time.time(), err=st["err"])
                 if not st["fail"]:
                     st["fail"] = True
                     incident("system", "mid", f"Không gọi được API RCS {API_NAMES[kind]}", st["err"])
@@ -539,8 +543,10 @@ async def receive(request, kind):
             break
         except (ValueError, UnicodeDecodeError):
             continue
-    if CFG.get("log_raw") or data is None:
-        write_log("raw", {"time": now_s(), "kind": kind, "ip": ip, "ok_json": data is not None, "body": body[:4000].decode("utf-8", "replace")})
+    if CFG.get("log_push", True) and data is not None:     # lưu nguyên bản tin RCS đẩy lên
+        write_log("push", {"time": now_s(), "kind": kind, "ip": ip, "body": data})
+    if data is None:
+        write_log("raw", {"time": now_s(), "kind": kind, "ip": ip, "ok_json": False, "body": body[:4000].decode("utf-8", "replace")})
     if data is None:
         incident("system", "mid", f"RCS gửi dữ liệu {kind} không đọc được (không phải JSON)", f"từ {ip}")
         return JSONResponse(OK)          # vẫn trả 1000 để RCS không gửi lại liên tục
@@ -645,7 +651,39 @@ async def api_state(request: Request):
                           "running": sum(1 for r in rob if r["status"] == 4 and not r["lost"]), "idle": sum(1 for r in rob if r["status"] == 1 and not r["lost"]),
                           "charging": sum(1 for r in rob if r["status"] == 5 and not r["lost"]), "active_alarms": len(act)},
               "silence_sec": int(silence) if silence is not None else None, "silence_warn": float(CFG.get("silence_warn_sec", 120)),
-              "never": CHAN["agv"]["last"] == 0})
+              "never": CHAN["agv"]["last"] == 0, "auth": {**AUTH, "user": API.get("user", "")} if API_ON else None})
+
+
+async def api_rcs_map(request: Request):
+    """Tải file map zip hiện tại của RCS về máy người bấm (kéo thả vào update_map.bat để cập nhật bản đồ tool)."""
+    if not API_ON:
+        return J({"error": "đang tắt rcs_api trong config.json"}, 400)
+    try:
+        name, blob = await asyncio.to_thread(rcs_map_fetch)
+    except rcs_api.RcsAuthError as e:
+        AUTH.update(need=True, ts=time.time(), err=str(e)[:300])
+        return J({"error": str(e), "auth": True}, 401)
+    except Exception as e:
+        return J({"error": str(e)}, 502)
+    incident("system", "low", "Đã tải map từ RCS", f"{name} · {len(blob) // 1024} KB")
+    return Response(blob, media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
+
+
+async def api_rcs_auth(request: Request):
+    """Lưu user/password RCS (cửa sổ nhập trên giao diện) vào config.json rồi hỏi lại RCS ngay."""
+    try:
+        d = await request.json()
+    except ValueError:
+        return J({"error": "dữ liệu không hợp lệ"}, 400)
+    user, pw = str(d.get("user") or "").strip(), str(d.get("password") or "")
+    cfg.save_rcs_auth(user, pw)
+    API.update(user=user, password=pw)
+    AUTH.update(need=False, err="")
+    for st in API_ST.values():
+        st["try"] = 0
+    incident("system", "low", "Đã lưu user/password RCS" if user else "Đã xoá user/password RCS", f"user: {user}" if user else "")
+    return J({"ok": True})
 
 
 async def api_incidents(request: Request):
@@ -678,9 +716,9 @@ async def api_system(request: Request):
             if os.path.isdir(p):
                 days.append({"date": name, "files": [{"name": f, "kb": round(os.path.getsize(os.path.join(p, f)) / 1024, 1)} for f in sorted(os.listdir(p))]})
     return J({"uptime": int(now - START), "channels": chans, "paths": CFG["paths"], "rcs_url": CFG.get("public_host", "") + ":" + str(CFG["listen"]["port_rcs"]), "web_url": CFG.get("public_host", "") + ":" + str(CFG["listen"]["port_web"]), "retention_days": CFG["retention_days"], "days": days,
-              "log_raw": CFG.get("log_raw"), "nodes": len(BY_CODE), "now": now_s(),
+              "log_push": CFG.get("log_push", True), "log_api": CFG.get("log_api", True), "nodes": len(BY_CODE), "now": now_s(),
               "map": {"points": len(POINTS), "built": (MAP or {}).get("built", ""), "source": (MAP or {}).get("source", "")},
-              "api": {"on": API_ON, "base": API.get("base", ""), "area_id": API.get("area_id"),
+              "api": {"on": API_ON, "base": API.get("base", ""), "area_id": API.get("area_id"), "user": API.get("user", ""),
                       "items": {k: {"name": API_NAMES[k], "every": API_EVERY[k], "count": st["count"], "err": st["err"], "fail": st["fail"],
                                     "ago": int(now - st["ok"]) if st["ok"] else None, "last": now_s(st["ok"]) if st["ok"] else ""} for k, st in API_ST.items()}}})
 
@@ -688,7 +726,7 @@ async def api_system(request: Request):
 async def api_history(request: Request):
     q = request.query_params
     date, kind = q.get("date") or day(), q.get("kind") or "incident"
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) or kind not in ("alarm", "agv", "task", "incident", "raw", "path", "order", "topology"):
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) or kind not in ("alarm", "agv", "task", "incident", "raw", "path", "order", "push", "api"):
         return J({"error": "tham số không hợp lệ"}, 400)
     rows = read_lines(os.path.join(LOG_DIR, date, kind + ".jsonl"), 2000)
     s = (q.get("q") or "").strip().lower()
@@ -780,7 +818,8 @@ async def lifespan(app):
 
 rcs_routes = []
 routes = [Route("/", index), Route("/api/state", api_state), Route("/api/incidents", api_incidents), Route("/api/tasks", api_tasks),
-          Route("/api/system", api_system), Route("/api/map", api_map), Route("/map/map.png", map_file), Route("/api/history", api_history), Route("/logs/{date}/{file}", download)]
+          Route("/api/system", api_system), Route("/api/map", api_map), Route("/map/map.png", map_file), Route("/api/history", api_history), Route("/logs/{date}/{file}", download),
+          Route("/api/rcs-auth", api_rcs_auth, methods=["POST"]), Route("/api/rcs-map", api_rcs_map)]
 def make_receiver(kind):
     async def handler(request: Request):
         return await receive(request, kind)
