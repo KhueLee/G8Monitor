@@ -74,3 +74,21 @@ def call(api_cfg, kind, body, trace=None):
 def download(url, timeout=120):
     with urllib.request.urlopen(url, timeout=timeout) as r:
         return r.read()
+
+
+def download_to(url, dest, progress=None, timeout=120):
+    """Tải file về đĩa theo từng khúc, gọi progress(đã tải, tổng) (tổng = 0 nếu máy chủ không báo). Trả về số byte."""
+    got = 0
+    with urllib.request.urlopen(url, timeout=timeout) as r, open(dest, "wb") as f:
+        total = int(r.headers.get("Content-Length") or 0)
+        while True:
+            b = r.read(256 * 1024)
+            if not b:
+                break
+            f.write(b)
+            got += len(b)
+            if progress:
+                progress(got, total)
+    if total and got != total:
+        raise RcsError(f"tải thiếu dữ liệu ({got}/{total} byte)")
+    return got

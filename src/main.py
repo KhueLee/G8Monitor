@@ -477,25 +477,6 @@ def rcs_fetch(kind, body):
             write_log("api", {"time": now_s(), "api": kind, **trace})
 
 
-def rcs_map_fetch():
-    """Nút "Tải map từ RCS": gọi topologyList lấy link, tải file map zip (mapZipUrl). Trả về (tên file, nội dung)."""
-    data = rcs_fetch("topology", {"areaId": int(API.get("area_id", 1))}) or {}
-    url = data.get("mapZipUrl") or ""
-    if not url:
-        raise rcs_api.RcsError(f"RCS không trả link map zip (trả về: {json.dumps(data, ensure_ascii=False)[:300]})")
-    trace = {"url": url.split("?")[0]}
-    try:
-        blob = rcs_api.download(url)
-        trace["bytes"] = len(blob)
-        return f"rcs_map_area{API.get('area_id')}_{time.strftime('%Y%m%d-%H%M')}.zip", blob
-    except Exception as e:
-        trace["error"] = str(e)[:500]
-        raise rcs_api.RcsError(f"không tải được file map {trace['url']}: {e}") from e
-    finally:
-        if CFG.get("log_api", True):
-            write_log("api", {"time": now_s(), "api": "map_download", "map_id": data.get("mapId"), **trace})
-
-
 async def rcs_poller():
     handlers = {"path": on_paths, "order": on_orders}
     bodies = {"path": {"areaId": int(API.get("area_id", 1))},
@@ -679,22 +660,6 @@ async def api_state(request: Request):
               "never": CHAN["agv"]["last"] == 0, "auth": {**AUTH, "user": API.get("user", "")} if API_ON else None})
 
 
-async def api_rcs_map(request: Request):
-    """Tải file map zip hiện tại của RCS về máy người bấm (kéo thả vào update_map.bat để cập nhật bản đồ tool)."""
-    if not API_ON:
-        return J({"error": "đang tắt rcs_api trong config.json"}, 400)
-    try:
-        name, blob = await asyncio.to_thread(rcs_map_fetch)
-    except rcs_api.RcsAuthError as e:
-        AUTH.update(need=True, ts=time.time(), err=str(e)[:300])
-        return J({"error": str(e), "auth": True}, 401)
-    except Exception as e:
-        return J({"error": str(e)}, 502)
-    incident("system", "low", "Đã tải map từ RCS", f"{name} · {len(blob) // 1024} KB")
-    return Response(blob, media_type="application/zip",
-                    headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
-
-
 # ---------------------------------------------------------------- nút cập nhật map / highbay (chạy tools\update_map.py, update_names.py)
 UPLOAD_DIR = os.path.join(ROOT, "raw", "upload")    # file map/highbay tải lên hoặc tải từ RCS (không đưa lên git)
 JOB = asyncio.Lock()                                # mỗi lúc chỉ chạy một việc cập nhật
@@ -708,12 +673,119 @@ def run_tool(script, *args):
     return p.returncode, (p.stdout + "\n" + p.stderr).strip()
 
 
-def save_upload(prefix, ext, blob):
+KEEP_UPLOADS = 5                                    # giữ 5 file gần nhất mỗi loại trong raw\upload
+
+
+def upload_path(prefix, ext):
     os.makedirs(UPLOAD_DIR, exist_ok=True)
-    path = os.path.join(UPLOAD_DIR, f"{prefix}_{time.strftime('%Y%m%d-%H%M%S')}{ext}")
+    olds = sorted(f for f in os.listdir(UPLOAD_DIR) if f.startswith(prefix + "_") and f.endswith(ext))
+    for f in olds[:max(0, len(olds) - KEEP_UPLOADS + 1)]:
+        try:
+            os.remove(os.path.join(UPLOAD_DIR, f))
+        except OSError:
+            pass
+    return os.path.join(UPLOAD_DIR, f"{prefix}_{time.strftime('%Y%m%d-%H%M%S')}{ext}")
+
+
+def save_upload(prefix, ext, blob):
+    path = upload_path(prefix, ext)
     with open(path, "wb") as f:
         f.write(blob)
     return path
+
+
+# Tải map từ RCS về MÁY CHỦ trước (mạng LAN ổn định), máy xem web kéo file từ máy chủ sau (theo khúc, mất gói thì thử lại khúc đó).
+# MAPJOB: tiến độ để giao diện hỏi định kỳ. stage: fetch (hỏi topologyList) -> download -> build (chỉ khi cập nhật) -> done | error
+MAPJOB = {"state": "idle", "mode": "", "stage": "", "bytes": 0, "total": 0, "file": "", "size": 0, "error": "", "log": "", "auth": False, "ts": 0}
+
+
+def rcs_map_to_host():
+    """Chạy trong luồng phụ: gọi topologyList, tải file mapZipUrl về raw/upload. Trả về đường dẫn file."""
+    data = rcs_fetch("topology", {"areaId": int(API.get("area_id", 1))}) or {}
+    url = data.get("mapZipUrl") or ""
+    if not url:
+        raise rcs_api.RcsError(f"RCS không trả link map zip (trả về: {json.dumps(data, ensure_ascii=False)[:300]})")
+    MAPJOB["stage"] = "download"
+    path = upload_path(f"rcs_map_area{API.get('area_id')}", ".zip")
+    trace = {"url": url.split("?")[0]}
+    t0 = time.time()
+    try:
+        n = rcs_api.download_to(url, path + ".part", lambda got, total: MAPJOB.update(bytes=got, total=total))
+        with open(path + ".part", "rb") as f:
+            head = f.read(200)
+        if not head.startswith(b"PK"):
+            raise rcs_api.RcsError(f"RCS trả về file không phải zip ({n} byte): {head[:120].decode('utf-8', 'replace')}")
+        os.replace(path + ".part", path)
+        trace.update(bytes=n, sec=round(time.time() - t0, 1), saved=os.path.relpath(path, ROOT))
+        return path
+    except Exception as e:
+        trace["error"] = str(e)[:500]
+        try:
+            os.remove(path + ".part")
+        except OSError:
+            pass
+        raise
+    finally:
+        if CFG.get("log_api", True):
+            write_log("api", {"time": now_s(), "api": "map_download", "map_id": data.get("mapId"), **trace})
+
+
+async def map_job(mode):
+    async with JOB:
+        try:
+            path = await asyncio.to_thread(rcs_map_to_host)
+            MAPJOB.update(file=os.path.basename(path), size=os.path.getsize(path))
+            if mode == "update":
+                MAPJOB["stage"] = "build"
+                code, out = await asyncio.to_thread(run_tool, "update_map.py", path)
+                MAPJOB["log"] = out
+                if code != 0:
+                    raise RuntimeError("dựng bản đồ không thành công, xem chi tiết bên dưới")
+                reload_now()
+                incident("system", "low", "Đã cập nhật bản đồ từ RCS", f"{MAPJOB['file']} · {MAPJOB['size'] // 1024} KB")
+            else:
+                incident("system", "low", "Đã tải map RCS về máy chủ", f"{MAPJOB['file']} · {MAPJOB['size'] // 1024} KB")
+            MAPJOB.update(state="done", stage="done")
+        except Exception as e:
+            if isinstance(e, rcs_api.RcsAuthError):
+                AUTH.update(need=True, ts=time.time(), err=str(e)[:300])
+            MAPJOB.update(state="error", error=str(e)[:500], auth=isinstance(e, rcs_api.RcsAuthError))
+            incident("system", "mid", "Cập nhật bản đồ từ RCS lỗi" if mode == "update" else "Tải map từ RCS lỗi", MAPJOB["error"])
+
+
+async def api_map_job(request: Request):
+    """Bắt đầu tải map từ RCS về máy chủ (mode=save) hoặc tải rồi cập nhật bản đồ (mode=update). Tiến độ: GET /api/map-job."""
+    if request.method == "GET":
+        return J({**MAPJOB, "age": int(time.time() - MAPJOB["ts"]) if MAPJOB["ts"] else None})
+    mode = "update" if request.query_params.get("mode") == "update" else "save"
+    if not API_ON:
+        return J({"error": "đang tắt rcs_api trong config.json"}, 400)
+    if JOB.locked() or MAPJOB["state"] == "run":
+        return J({"error": "đang có một cập nhật khác chạy, chờ xong rồi bấm lại"}, 409)
+    MAPJOB.update(state="run", mode=mode, stage="fetch", bytes=0, total=0, file="", size=0, error="", log="", auth=False, ts=time.time())
+    asyncio.create_task(map_job(mode))
+    return J({"ok": True})
+
+
+async def api_map_file(request: Request):
+    """Máy xem web kéo file map từ máy chủ. Hỗ trợ header Range để tải theo khúc và tải lại khúc lỗi."""
+    name = request.query_params.get("name") or ""
+    path = os.path.join(UPLOAD_DIR, name)
+    if not re.fullmatch(r"rcs_map_area\w*_\d{8}-\d{6}\.zip", name) or not os.path.exists(path):
+        return J({"error": "không thấy file map trên máy chủ, bấm tải lại"}, 404)
+    size = os.path.getsize(path)
+    m = re.fullmatch(r"bytes=(\d+)-(\d*)", (request.headers.get("range") or "").strip())
+    if not m:
+        return FileResponse(path, filename=name, headers={"Accept-Ranges": "bytes", "Cache-Control": "no-store"})
+    a = int(m.group(1))
+    b = min(int(m.group(2)) if m.group(2) else size - 1, size - 1)
+    if a > b:
+        return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
+    with open(path, "rb") as f:
+        f.seek(a)
+        data = f.read(b - a + 1)
+    return Response(data, status_code=206, media_type="application/zip",
+                    headers={"Content-Range": f"bytes {a}-{b}/{size}", "Accept-Ranges": "bytes", "Cache-Control": "no-store"})
 
 
 def reload_now():
@@ -723,28 +795,14 @@ def reload_now():
 
 
 async def api_map_update(request: Request):
-    """Nút "Cập nhật map": tải map zip từ RCS (hoặc file zip người dùng tải lên), tách ảnh nền + topology, thay bản đồ đang hiển thị."""
-    if JOB.locked():
+    """Nút "Cập nhật từ file zip": file zip người dùng tải lên -> tách ảnh nền + topology, thay toàn bộ bản đồ đang hiển thị."""
+    if JOB.locked() or MAPJOB["state"] == "run":
         return J({"error": "đang có một cập nhật khác chạy, chờ xong rồi bấm lại"}, 409)
     async with JOB:
-        if request.query_params.get("src") == "file":
-            blob = await request.body()
-            if not blob.startswith(b"PK"):
-                return J({"error": "file tải lên không phải file zip"}, 400)
-            path = save_upload("map", ".zip", blob)
-        else:
-            if not API_ON:
-                return J({"error": "đang tắt rcs_api trong config.json"}, 400)
-            try:
-                _, blob = await asyncio.to_thread(rcs_map_fetch)
-            except rcs_api.RcsAuthError as e:
-                AUTH.update(need=True, ts=time.time(), err=str(e)[:300])
-                return J({"error": str(e), "auth": True}, 401)
-            except Exception as e:
-                return J({"error": str(e)}, 502)
-            if not blob.startswith(b"PK"):
-                return J({"error": f"RCS trả về file không phải zip ({len(blob)} byte): {blob[:120].decode('utf-8', 'replace')}"}, 502)
-            path = save_upload(f"rcs_map_area{API.get('area_id')}", ".zip", blob)
+        blob = await request.body()
+        if not blob.startswith(b"PK"):
+            return J({"error": "file tải lên không phải file zip"}, 400)
+        path = save_upload("map", ".zip", blob)
         try:
             code, out = await asyncio.to_thread(run_tool, "update_map.py", path)
         except Exception as e:
@@ -760,7 +818,7 @@ async def api_map_update(request: Request):
 
 async def api_highbay(request: Request):
     """Nút "Cập nhật highbay": body = file Excel mapping .xlsx -> bóc tách, ghi nodes.json, nạp lại ngay."""
-    if JOB.locked():
+    if JOB.locked() or MAPJOB["state"] == "run":
         return J({"error": "đang có một cập nhật khác chạy, chờ xong rồi bấm lại"}, 409)
     async with JOB:
         blob = await request.body()
@@ -922,7 +980,7 @@ async def lifespan(app):
 rcs_routes = []
 routes = [Route("/", index), Route("/api/state", api_state), Route("/api/incidents", api_incidents), Route("/api/tasks", api_tasks),
           Route("/api/system", api_system), Route("/api/map", api_map), Route("/map/map.png", map_file), Route("/api/history", api_history), Route("/logs/{date}/{file}", download),
-          Route("/api/rcs-auth", api_rcs_auth, methods=["POST"]), Route("/api/rcs-map", api_rcs_map),
+          Route("/api/rcs-auth", api_rcs_auth, methods=["POST"]), Route("/api/map-job", api_map_job, methods=["GET", "POST"]), Route("/api/map-file", api_map_file),
           Route("/api/map-update", api_map_update, methods=["POST"]), Route("/api/highbay", api_highbay, methods=["POST"])]
 def make_receiver(kind):
     async def handler(request: Request):

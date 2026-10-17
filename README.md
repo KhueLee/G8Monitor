@@ -66,19 +66,21 @@ Sau topologyList, tool tải file map bằng HTTP GET theo link RCS trả về (
 | `timeout_sec` | `8` | Chờ RCS trả lời tối đa bao nhiêu giây |
 
 Đặt `0` để tắt từng loại.
-- **Đường đi robot**: vẽ trên bản đồ bằng nét đứt cùng màu robot (chọn robot thì nét đậm, vòng tròn trắng là điểm đích). Chỉ vẽ **phần đường còn lại** (từ điểm gần robot nhất tới đích). Hai điểm liền nhau mà cách xa hơn `route_jump_mm` (mặc định 3 m) và nằm chéo (không dọc lối đi) thì không nối, để không có đường chéo cắt ngang bản đồ. Thẻ robot hiện "Đường đi: N điểm → đích (tên ô)" ở thẻ robot. Log `path.jsonl` chỉ ghi khi robot nhận **đường mới hoặc bị đổi tuyến** (`reroute=true`), không ghi mỗi lần đường rút ngắn.
+- **Đường đi robot**: vẽ trên bản đồ bằng **nét đứt màu cam** (chọn robot thì nét liền, đậm; vòng tròn trắng viền cam là điểm đích). Chỉ vẽ **phần đường còn lại** (từ điểm gần robot nhất tới đích). Hai điểm liền nhau mà cách xa hơn `route_jump_mm` (mặc định 3 m) và nằm chéo (không dọc lối đi) thì không nối, để không có đường chéo cắt ngang bản đồ. Thẻ robot hiện "Đường đi: N điểm → đích (tên ô)" ở thẻ robot. Log `path.jsonl` chỉ ghi khi robot nhận **đường mới hoặc bị đổi tuyến** (`reroute=true`), không ghi mỗi lần đường rút ngắn.
 - **Danh sách task**: tab Task có mục "Task đang có trên RCS" (chưa gửi/đang gửi/đang chạy/lỗi). Log `order.jsonl` ghi mỗi khi task đổi trạng thái. Task chuyển sang gửi lỗi/chạy lỗi mà callback chưa báo thì tạo sự cố.
 - Không gọi được API thì tạo sự cố một lần, gọi lại được cũng báo. Tình trạng từng API xem ở tab **Hệ thống → Tool hỏi RCS định kỳ**.
 
 ## Cập nhật bản đồ và highbay trên web (tab Hệ thống)
 Cần `pip install -r requirements.txt` trên máy chạy tool (`pillow numpy` để dựng bản đồ, `openpyxl` để đọc Excel). Mỗi lúc chỉ chạy một việc cập nhật. File tải lên/tải từ RCS được giữ lại trong `raw\upload\` (không đưa lên git) để đối chiếu khi cần.
 
-### 🗺️ Bản đồ
+### Bản đồ
 | Nút | Làm gì |
 |---|---|
-| **🔄 Cập nhật map từ RCS** | Tự tải map zip từ RCS → tách **ảnh nền** (`.pgm` → `map.png`) và **topology** (toạ độ các điểm → `points.json`) của loại xe `map_model` → thay bản đồ đang hiển thị. Bản đồ trên web nạp lại ngay, không cần restart |
-| **📤 Cập nhật từ file zip** | Như trên nhưng dùng file zip chọn từ máy (map xuất tay từ RCS). Dùng khi map RCS tải qua API thiếu ảnh nền |
-| **⬇️ Tải map (.zip) về máy** | Chỉ lưu file map zip của RCS về máy đang mở web, không đổi bản đồ tool |
+| **Cập nhật map từ RCS** | Máy chủ tự tải map zip từ RCS → tách **ảnh nền** (`.pgm` → `map.png`) và **topology** (toạ độ các điểm → `points.json`) của loại xe `map_model` → **thay toàn bộ** bản đồ đang hiển thị. Bản đồ trên web nạp lại ngay, không cần restart |
+| **Cập nhật từ file zip** | Như trên nhưng dùng file zip chọn từ máy đang xem (map xuất tay từ RCS), có hiện % đã gửi lên. Dùng khi map RCS tải qua API thiếu ảnh nền |
+| **Tải map (.zip) về máy** | Máy chủ tải map từ RCS về `raw\upload\` trước, sau đó máy đang xem kéo file về. Không đổi bản đồ tool |
+
+**Tiến độ và mạng chập chờn:** các nút trên hiện thanh tiến độ và chữ báo đang ở bước nào: hỏi RCS → máy chủ tải từ RCS (`x MB / y MB, %`) → dựng bản đồ, hoặc → kéo về máy này (`x MB / y MB, %`). Máy chủ tải từ RCS qua mạng LAN nên ổn định. Bước kéo về máy xem web (thường ở xa, hay mất gói) chia file thành **từng khúc 1 MB**: khúc nào lỗi thì chờ rồi thử lại khúc đó (tối đa 10 lần), không phải tải lại từ đầu. Nếu vẫn hỏng, file vẫn nằm trên máy chủ ở `raw\upload\`, bấm lại hoặc lấy trực tiếp trên máy chủ. Mỗi lúc chỉ chạy một việc; bấm khi đang chạy sẽ báo chờ.
 
 Cách tool lấy map từ RCS:
 1. Gọi **topologyList**. API này không trả bản đồ, chỉ trả link tải:
@@ -87,17 +89,26 @@ Cách tool lấy map từ RCS:
      "mapZipUrl":"http://<IP RCS>:8888/textureMap/2/default/Map/commonTopo.zip?token=...",
      "mapJsonUrl":"http://<IP RCS>:8888/textureMap/2/default/Map/compress.json?token=..."}}
    ```
-2. Tải file theo link `mapZipUrl` (`mapJsonUrl` không dùng), lưu thành `raw\upload\rcs_map_area2_YYYYMMDD-HHMMSS.zip`.
+2. Máy chủ tải file theo link `mapZipUrl` (`mapJsonUrl` không dùng), lưu thành `raw\upload\rcs_map_area2_YYYYMMDD-HHMMSS.zip` (giữ 5 bản gần nhất).
 3. Chạy `tools\update_map.py` với file đó (giải nén zip lồng zip, chọn map loại xe, dựng ảnh, sao lưu bản cũ). Kết quả công cụ in ra hiện ngay dưới nút: các map có trong file, map đã chọn, số điểm, số ô highbay có toạ độ trên bản đồ mới.
 
-Mỗi lần gọi ghi vào `api.jsonl` và tab Sự cố. RCS đòi user/password thì hiện cửa sổ nhập (xem dưới), nhập xong bấm lại.
+Mỗi lần gọi ghi vào `api.jsonl` (dòng `map_download`: link, dung lượng, số giây, nơi lưu) và tab Sự cố. RCS đòi user/password thì hiện cửa sổ nhập (xem dưới), nhập xong bấm lại.
 
-### 🏷️ Highbay (mapping node ↔ tên ô)
+### Highbay (mapping node ↔ tên ô)
 Mục đích: RCS chỉ gửi mã node (vd. `01001045`), còn người vận hành nhớ vị trí theo tên ô như `D36-12` / `D36-12-1`. Bảng highbay giúp tool dịch mã node ra tên ô, để biết ngay **robot đang ở đâu, task thao tác ở điểm nào, lỗi xảy ra ở đâu**.
 
-Bấm **📤 Tải file highbay (.xlsx)**, chọn file Excel mapping (cùng mẫu với `raw\G8_mapping_Node_Highbay_20261007.xlsx`). Tool **bóc tách và cập nhật luôn** (ghi `data\nodes.json`, bản cũ lưu `nodes.json.bak`) và nạp ngay, không cần restart. Kết quả hiện dưới nút để tham khảo: số điểm theo khu, mã trùng, dòng thiếu Tên RCS, số ô có toạ độ trên bản đồ, các điểm thêm/bỏ/đổi so với bảng cũ.
+Bấm **Tải file highbay (.xlsx)**, chọn file. Tool **bóc tách và cập nhật luôn** (ghi `data\nodes.json`, bản cũ lưu `nodes.json.bak`) và nạp ngay, không cần restart. Kết quả hiện dưới nút để tham khảo: số điểm, số ô-tầng, theo khu, theo dãy, mã trùng, số ô có toạ độ trên bản đồ, các điểm thêm/bỏ/đổi so với bảng cũ. Tool tự nhận 2 dạng file:
 
-Nên cập nhật bản đồ trước rồi mới cập nhật highbay, để số "ô có toạ độ trên bản đồ" tính theo bản đồ mới.
+| Dạng file | Cột cần có | Cách cập nhật |
+|---|---|---|
+| **File vị trí xuất từ RCS** (vd. `Area_G8_NVL_SLAM_High_Location_20261017.xlsx`) | `Area Name`, `Location Code` (ô-tầng, vd. `E40-1-1`), `Node` (mã node RCS) | Các ô-tầng cùng node gom lại (`E40-1-1..4` → ô `E40-1`). Khu = `Area Name` |
+| **File mapping** (vd. `raw\G8_mapping_Node_Highbay_20261007.xlsx`) | `Khu`, `Dãy`, `Node`, `Tên RCS`, `Tầng 1`–`Tầng 4` | Tên ô lấy từ Tầng 1 bỏ số tầng |
+
+**Cả hai dạng đều thay toàn bộ bảng cũ**: mỗi lần tải lên phải là file đầy đủ, mới nhất (khu nào không có trong file sẽ không còn tên ô). Bản đồ cũng vậy: mỗi lần cập nhật là thay hoàn toàn bằng bản mới nhất.
+
+- Cột `Location Coordinates` trong file RCS không dùng (giá trị gần như giống nhau ở mọi dòng). Toạ độ ô lấy từ bản đồ theo mã node.
+- Báo "**N ô chưa có trên bản đồ hiện tại**" nghĩa là node mới chưa có trong bản đồ tool: bấm **Cập nhật map từ RCS** rồi tải lại file highbay. Vẫn thiếu thì kiểm tra mã Node.
+- Nên cập nhật bản đồ trước rồi mới cập nhật highbay.
 
 ## User/password RCS
 Mạng nội bộ RCS thường tắt xác thực nên để trống. Nếu RCS bật xác thực và từ chối tool (HTTP 401/403, hoặc trả lỗi có chữ auth/token/login...), **giao diện web tự hiện cửa sổ "RCS yêu cầu đăng nhập"**.
@@ -110,7 +121,7 @@ Mạng nội bộ RCS thường tắt xác thực nên để trống. Nếu RCS 
 Password lưu dạng chữ thường trong `config.json` (không đưa lên git); trang web chỉ dùng trong LAN, ai mở được web cũng đổi được user/password này.
 
 ## Giao diện
-Chọn giao diện bằng **nút sổ xuống** ở góc trái thanh trên cùng (hiện tên giao diện đang xem, ví dụ "🗺️ Bản đồ ▼"); chấm đỏ trên nút là số lỗi/cảnh báo đang có. Trình duyệt nhớ giao diện xem lần cuối. Thêm giao diện mới: thêm một `<button data-t="...">` trong `#menu` và một `<section class="tab">` trong `src\index.html`.
+Màu giao diện theo logo VietGlory (đỏ, xám); đường đi dự kiến của robot màu cam theo logo G8. Chọn giao diện bằng **nút sổ xuống** trên thanh trên cùng, cạnh chữ G8 Monitor (hiện tên giao diện đang xem, ví dụ "Bản đồ ▼"); chấm đỏ trên nút là số lỗi/cảnh báo đang có. Trình duyệt nhớ giao diện xem lần cuối. Thêm giao diện mới: thêm một `<button data-t="...">` trong `#menu` và một `<section class="tab">` trong `src\index.html`.
 - **Bản đồ** (mặc định): ảnh bản đồ nhà máy (dựng từ map RCS), kéo để di chuyển, hai ngón/cuộn chuột để zoom, nút + − ⤢ (⤢ = vừa khung). Chỉ là ảnh, không tương tác node/edge. Robot là chấm tròn có tên, **màu theo trạng thái** (xanh lá: đang chạy, xanh dương: rảnh, tím: sạc, đỏ nhấp nháy: lỗi, xám: mất tín hiệu/offline; viền cam hoặc dấu ! khi có cảnh báo). Vị trí cập nhật mỗi 3 giây, không chạy mượt.
   Chạm robot (hoặc bấm tên robot ở hàng trên) → **thanh thông báo** hiện trạng thái, vị trí (tên ô), task và **lỗi dự đoán**; thanh đỏ trên cùng liệt kê robot đang có lỗi nặng.
   Vị trí robot hiển thị theo **ô highbay gần nhất** (dạng `D36-16`, ví dụ "Gần D36-16 (Kho 2500)"); trên bản đồ vẫn đặt theo toạ độ.
@@ -136,9 +147,9 @@ Công cụ tạo lại `data\map\map.png`, `points.json` (toạ độ điểm), 
 Bản đồ hiện tại dựng từ `3-map2 (29).zip` (map `RTA-C060-LQ-2L2T-E-410`). Tên nguồn và giờ dựng xem ở tab Hệ thống. Nhãn khu (Kho 2500, Xưởng máy...) khai trong `ZONES` của `tools\build_map.py`.
 
 ## Cập nhật tên điểm highbay bằng dòng lệnh (`tools\update_names.py`)
-Cách dễ nhất là nút trên web (xem trên). Bằng dòng lệnh: cần `pip install openpyxl`, kéo thả file Excel mapping (vd. `raw\G8_mapping_Node_Highbay_20261007.xlsx`) vào `tools\update_names.bat`, hoặc chạy `python tools\update_names.py <file.xlsx>`. Thêm `--check` để chỉ kiểm tra, không ghi.
-- Đọc sheet đầu tiên, dòng 1 là tiêu đề. Cột cần có: **Khu, Dãy, Node, Tên RCS (name), Tầng 1–Tầng 4**. Các cột khác bỏ qua, thứ tự cột không quan trọng.
-- Tên ô lấy từ Tầng 1 bỏ số tầng (`D32-1-1` → ô `D32-1`). Dòng không có Node hoặc Tầng 1 bị bỏ qua.
+Cách dễ nhất là nút trên web (xem trên, nhận cả file vị trí xuất từ RCS và file mapping). Bằng dòng lệnh: cần `pip install openpyxl`, kéo thả file Excel (vd. `raw\G8_mapping_Node_Highbay_20261007.xlsx`) vào `tools\update_names.bat`, hoặc chạy `python tools\update_names.py <file.xlsx>`. Thêm `--check` để chỉ kiểm tra, không ghi.
+- Đọc sheet đầu tiên, dòng 1 là tiêu đề. Cột theo bảng ở phần **Highbay** trên (file RCS hoặc file mapping). Các cột khác bỏ qua, thứ tự cột không quan trọng.
+- Tên ô bỏ số tầng (`D32-1-1` → ô `D32-1`). Dòng thiếu Node hoặc tên ô bị bỏ qua.
 - Báo số điểm theo khu, các điểm thêm/bỏ/đổi so với `nodes.json` hiện tại, mã trùng, thiếu Tên RCS, số ô có/không có toạ độ trên bản đồ.
 - Ghi `data\nodes.json` (bản cũ lưu thành `nodes.json.bak`). **Tool đang chạy tự nạp lại trong vòng 10 giây.**
 **Kiểm tra lần đầu:** toạ độ `devicePostionRec` RCS gửi đang giả định là mm cùng hệ với bản đồ. Khi có dữ liệu thật, robot phải nằm trên đường đi. Nếu lệch đều một khoảng, chỉnh `xy_offset_mm` trong `config.json`. Nếu RCS không gửi toạ độ, tool lấy toạ độ từ mã điểm `devicePosition` (kém chính xác hơn).
