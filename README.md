@@ -1,6 +1,6 @@
 # G8 Monitor – theo dõi robot và giám sát lỗi (giai đoạn 1: thu thập dữ liệu RCS)
 
-RCS/ICS **tự đẩy** dữ liệu lên tool này (trạng thái robot, cảnh báo, task). Tool còn **tự hỏi RCS** (máy RCS `192.168.110.100`, area 2, mặc định bật) đường đi robot và danh sách task, và tải map RCS khi bấm nút. Tool lưu log theo ngày và hiển thị trên web tiếng Việt (dùng được trên điện thoại).
+RCS/ICS **tự đẩy** dữ liệu lên tool này (trạng thái robot, cảnh báo, task). Tool còn **tự hỏi RCS** (máy RCS `192.168.110.100`, area 2, mặc định bật) đường đi robot và danh sách task. Trên web có nút **cập nhật bản đồ từ RCS** và **cập nhật bảng highbay từ file Excel**. Tool lưu log theo ngày và hiển thị trên web tiếng Việt (dùng được trên điện thoại).
 
 ## Cài Git và tải tool về máy client (PC chạy tool)
 1. **Cài Git**: tải Git for Windows tại https://git-scm.com/download/win (bản 64-bit), chạy file cài, để mặc định và bấm Next đến hết. Ở bước "Adjusting your PATH environment" giữ lựa chọn **Git from the command line and also from 3rd-party software**.
@@ -48,7 +48,7 @@ Chỉ gọi **API đọc**, không gửi lệnh nào cho robot (không tạo/hu�
 |---|---|---|---|---|
 | getRobotTaskPath (4.1.2.5) | `/ics/out/getRobotTaskPath` | `{"areaId":2}` | mỗi 5 giây (`path_sec`) | Đường đi từng robot, vẽ trên bản đồ |
 | getOrderList (4.1.1.7) | `/ics/out/task/getOrderList` | `{"areaId":2,"StartPage":"1","pageSize":"50"}` | mỗi 30 giây (`order_sec`) | 50 task mới nhất và trạng thái |
-| topologyList (4.1.5.1) | `/ics/out/topologyList` | `{"areaId":2}` | chỉ khi bấm **Tải map (.zip)** hoặc chạy `update_map.py --rcs` | Lấy link tải file map |
+| topologyList (4.1.5.1) | `/ics/out/topologyList` | `{"areaId":2}` | chỉ khi bấm **Cập nhật map từ RCS** / **Tải map (.zip) về máy**, hoặc chạy `update_map.py --rcs` | Lấy link tải file map |
 
 Sau topologyList, tool tải file map bằng HTTP GET theo link RCS trả về (máy chủ file RCS, cổng 8888). Đây là file tĩnh, không phải API.
 
@@ -66,22 +66,38 @@ Sau topologyList, tool tải file map bằng HTTP GET theo link RCS trả về (
 | `timeout_sec` | `8` | Chờ RCS trả lời tối đa bao nhiêu giây |
 
 Đặt `0` để tắt từng loại.
-- **Đường đi robot**: vẽ trên bản đồ (nét đứt, chọn robot thì nét đậm, vòng tròn trắng là điểm đích), hiện "Đường đi: N điểm → đích (tên ô)" ở thẻ robot. Log `path.jsonl` chỉ ghi khi robot nhận **đường mới hoặc bị đổi tuyến** (`reroute=true`), không ghi mỗi lần đường rút ngắn.
+- **Đường đi robot**: vẽ trên bản đồ bằng nét đứt cùng màu robot (chọn robot thì nét đậm, vòng tròn trắng là điểm đích). Chỉ vẽ **phần đường còn lại** (từ điểm gần robot nhất tới đích). Hai điểm liền nhau mà cách xa hơn `route_jump_mm` (mặc định 3 m) và nằm chéo (không dọc lối đi) thì không nối, để không có đường chéo cắt ngang bản đồ. Thẻ robot hiện "Đường đi: N điểm → đích (tên ô)" ở thẻ robot. Log `path.jsonl` chỉ ghi khi robot nhận **đường mới hoặc bị đổi tuyến** (`reroute=true`), không ghi mỗi lần đường rút ngắn.
 - **Danh sách task**: tab Task có mục "Task đang có trên RCS" (chưa gửi/đang gửi/đang chạy/lỗi). Log `order.jsonl` ghi mỗi khi task đổi trạng thái. Task chuyển sang gửi lỗi/chạy lỗi mà callback chưa báo thì tạo sự cố.
 - Không gọi được API thì tạo sự cố một lần, gọi lại được cũng báo. Tình trạng từng API xem ở tab **Hệ thống → Tool hỏi RCS định kỳ**.
 
-## Tải map từ RCS (nút trên web)
-Tab **Hệ thống → Tải map từ RCS → ⬇️ Tải map (.zip)**. Không gọi định kỳ, chỉ khi bấm nút.
-1. Tool gọi **topologyList**. API này không trả bản đồ, chỉ trả link tải:
+## Cập nhật bản đồ và highbay trên web (tab Hệ thống)
+Cần `pip install -r requirements.txt` trên máy chạy tool (`pillow numpy` để dựng bản đồ, `openpyxl` để đọc Excel). Mỗi lúc chỉ chạy một việc cập nhật. File tải lên/tải từ RCS được giữ lại trong `raw\upload\` (không đưa lên git) để đối chiếu khi cần.
+
+### 🗺️ Bản đồ
+| Nút | Làm gì |
+|---|---|
+| **🔄 Cập nhật map từ RCS** | Tự tải map zip từ RCS → tách **ảnh nền** (`.pgm` → `map.png`) và **topology** (toạ độ các điểm → `points.json`) của loại xe `map_model` → thay bản đồ đang hiển thị. Bản đồ trên web nạp lại ngay, không cần restart |
+| **📤 Cập nhật từ file zip** | Như trên nhưng dùng file zip chọn từ máy (map xuất tay từ RCS). Dùng khi map RCS tải qua API thiếu ảnh nền |
+| **⬇️ Tải map (.zip) về máy** | Chỉ lưu file map zip của RCS về máy đang mở web, không đổi bản đồ tool |
+
+Cách tool lấy map từ RCS:
+1. Gọi **topologyList**. API này không trả bản đồ, chỉ trả link tải:
    ```
    {"code":1000, "data":{"mapId":2,
      "mapZipUrl":"http://<IP RCS>:8888/textureMap/2/default/Map/commonTopo.zip?token=...",
      "mapJsonUrl":"http://<IP RCS>:8888/textureMap/2/default/Map/compress.json?token=..."}}
    ```
-2. Tool tải file theo link `mapZipUrl` (map nén: topo và ảnh nền; `mapJsonUrl` không dùng).
-3. Trình duyệt lưu file về máy đang mở web, tên `rcs_map_area2_YYYYMMDD-HHMM.zip`. Kéo thả file này vào `tools\update_map.bat` để cập nhật bản đồ tool (xem phần **Cập nhật bản đồ** bên dưới).
+2. Tải file theo link `mapZipUrl` (`mapJsonUrl` không dùng), lưu thành `raw\upload\rcs_map_area2_YYYYMMDD-HHMMSS.zip`.
+3. Chạy `tools\update_map.py` với file đó (giải nén zip lồng zip, chọn map loại xe, dựng ảnh, sao lưu bản cũ). Kết quả công cụ in ra hiện ngay dưới nút: các map có trong file, map đã chọn, số điểm, số ô highbay có toạ độ trên bản đồ mới.
 
-Mỗi lần tải ghi vào `api.jsonl` (phản hồi topologyList, link, dung lượng file) và tab Sự cố. RCS đòi user/password thì hiện cửa sổ nhập như dưới, nhập xong bấm tải lại.
+Mỗi lần gọi ghi vào `api.jsonl` và tab Sự cố. RCS đòi user/password thì hiện cửa sổ nhập (xem dưới), nhập xong bấm lại.
+
+### 🏷️ Highbay (mapping node ↔ tên ô)
+Mục đích: RCS chỉ gửi mã node (vd. `01001045`), còn người vận hành nhớ vị trí theo tên ô như `D36-12` / `D36-12-1`. Bảng highbay giúp tool dịch mã node ra tên ô, để biết ngay **robot đang ở đâu, task thao tác ở điểm nào, lỗi xảy ra ở đâu**.
+
+Bấm **📤 Tải file highbay (.xlsx)**, chọn file Excel mapping (cùng mẫu với `raw\G8_mapping_Node_Highbay_20261007.xlsx`). Tool **bóc tách và cập nhật luôn** (ghi `data\nodes.json`, bản cũ lưu `nodes.json.bak`) và nạp ngay, không cần restart. Kết quả hiện dưới nút để tham khảo: số điểm theo khu, mã trùng, dòng thiếu Tên RCS, số ô có toạ độ trên bản đồ, các điểm thêm/bỏ/đổi so với bảng cũ.
+
+Nên cập nhật bản đồ trước rồi mới cập nhật highbay, để số "ô có toạ độ trên bản đồ" tính theo bản đồ mới.
 
 ## User/password RCS
 Mạng nội bộ RCS thường tắt xác thực nên để trống. Nếu RCS bật xác thực và từ chối tool (HTTP 401/403, hoặc trả lỗi có chữ auth/token/login...), **giao diện web tự hiện cửa sổ "RCS yêu cầu đăng nhập"**.
@@ -101,7 +117,7 @@ Chọn giao diện bằng **nút sổ xuống** ở góc trái thanh trên cùng
 - **Robot**: thẻ từng robot (trạng thái, pin, vị trí → tên ô highbay, task, kệ, "cập nhật x giây trước"). Lỗi tô đỏ, mất tín hiệu tô vàng.
 - **Sự cố**: cảnh báo đang xảy ra (kèm mã lỗi như 8039, gợi ý của RCS) và dòng thời gian sự cố.
 - **Task**: task đang có trên RCS (getOrderList) và trạng thái task RCS báo (kể cả gửi lỗi/chạy lỗi).
-- **Hệ thống**: lần cuối nhận từng loại dữ liệu, tình trạng các API tool hỏi RCS (kèm nút nhập user/password RCS), bản đồ đang dùng, xem log theo ngày/loại/từ khóa, **nút tải map từ RCS** (.zip), tải file log.
+- **Hệ thống**: lần cuối nhận từng loại dữ liệu, tình trạng các API tool hỏi RCS (kèm nút nhập user/password RCS), xem log theo ngày/loại/từ khóa, **cập nhật bản đồ** (từ RCS / file zip, tải map về máy), **cập nhật highbay** (tải file Excel lên là cập nhật), tải file log.
 
 Thanh trên cùng: xanh "Đang nhận dữ liệu"; đỏ "RCS im lặng ..." nếu quá `silence_warn_sec` không có tin robot.
 Robot theo dõi: LT01–LT05, FK02 (khai ở `robots` trong config.json; robot chưa có dữ liệu vẫn hiện thẻ "Chưa nhận dữ liệu").
@@ -110,20 +126,20 @@ Robot theo dõi: LT01–LT05, FK02 (khai ở `robots` trong config.json; robot c
 Suy ra từ dữ liệu RCS gửi, kèm cách xử lý bằng tiếng Việt (bảng mã lỗi trong `data\hints.json`, có thể sửa):
 cảnh báo RCS đang xảy ra (mã 8039, 8024, 25216...) · robot Fault chưa có chi tiết · mất tín hiệu/offline · pin thấp · **nghi kẹt** (đang chạy task nhưng đứng yên quá `stuck_sec`, mặc định 180 giây) · sạc nhưng pin không tăng `charge_stall_min` phút · task vừa gửi lỗi/chạy lỗi. Đây là **dự đoán**, không phải kết luận.
 
-## Cập nhật bản đồ khi map RCS đổi (`tools\update_map.py`)
-Cần `pip install pillow numpy`. Hai cách:
-- **Từ file map xuất từ RCS** (hoặc file tải bằng nút **Tải map (.zip)** ở tab Hệ thống): kéo thả file zip (vd. `raw\3-map2 (29).zip`) vào `tools\update_map.bat`, hoặc chạy `python tools\update_map.py "raw\3-map2 (29).zip"`. Zip lồng zip (RTA-C060..., RTA-C100..., RTA-FD200...) tự giải nén. Thư mục đã giải nén cũng được.
+## Cập nhật bản đồ bằng dòng lệnh (`tools\update_map.py`)
+Cách dễ nhất là nút trên web (xem trên). Trên máy chạy tool cũng làm được bằng dòng lệnh, cần `pip install pillow numpy`:
+- **Từ file map xuất từ RCS**: kéo thả file zip (vd. `raw\3-map2 (29).zip`) vào `tools\update_map.bat`, hoặc chạy `python tools\update_map.py "raw\3-map2 (29).zip"`. Zip lồng zip (RTA-C060..., RTA-C100..., RTA-FD200...) tự giải nén. Thư mục đã giải nén cũng được.
 - **Tải thẳng từ RCS trên máy chạy tool**: `python tools\update_map.py --rcs` (hoặc chạy `tools\update_map.bat` không kéo file), dùng API topologyList với `rcs_api` trong config. Nếu file RCS trả về không có ảnh nền `.pgm` thì dùng cách thứ nhất.
 
 Tuỳ chọn: `--list` chỉ xem trong file có những map nào; `--model RTA-C100` chọn map loại xe khác (mặc định `map_model` trong config, là `RTA-C060`); `--scale 3` hệ số thu nhỏ ảnh.
 Công cụ tạo lại `data\map\map.png`, `points.json` (toạ độ điểm), `map_meta.json`. Bản đồ cũ được sao lưu vào `data\map\backup\` (giữ 5 bản gần nhất). Công cụ cũng kiểm tra các ô highbay trong `data\nodes.json` có trên bản đồ mới không. **Tool đang chạy tự nạp bản đồ mới trong vòng 10 giây, không cần restart.** Tải lại trang web để thấy ảnh mới.
 Bản đồ hiện tại dựng từ `3-map2 (29).zip` (map `RTA-C060-LQ-2L2T-E-410`). Tên nguồn và giờ dựng xem ở tab Hệ thống. Nhãn khu (Kho 2500, Xưởng máy...) khai trong `ZONES` của `tools\build_map.py`.
 
-## Cập nhật tên điểm highbay (`tools\update_names.py`)
-Cần `pip install openpyxl`. Kéo thả file Excel mapping (vd. `raw\G8_mapping_Node_Highbay_20261007.xlsx`) vào `tools\update_names.bat`, hoặc chạy `python tools\update_names.py <file.xlsx>`. Thêm `--check` để chỉ kiểm tra, không ghi.
+## Cập nhật tên điểm highbay bằng dòng lệnh (`tools\update_names.py`)
+Cách dễ nhất là nút trên web (xem trên). Bằng dòng lệnh: cần `pip install openpyxl`, kéo thả file Excel mapping (vd. `raw\G8_mapping_Node_Highbay_20261007.xlsx`) vào `tools\update_names.bat`, hoặc chạy `python tools\update_names.py <file.xlsx>`. Thêm `--check` để chỉ kiểm tra, không ghi.
 - Đọc sheet đầu tiên, dòng 1 là tiêu đề. Cột cần có: **Khu, Dãy, Node, Tên RCS (name), Tầng 1–Tầng 4**. Các cột khác bỏ qua, thứ tự cột không quan trọng.
 - Tên ô lấy từ Tầng 1 bỏ số tầng (`D32-1-1` → ô `D32-1`). Dòng không có Node hoặc Tầng 1 bị bỏ qua.
-- Báo số điểm theo khu, các điểm thêm/bỏ/đổi so với `nodes.json` hiện tại, mã trùng, thiếu Tên RCS, và ô không có trên bản đồ.
+- Báo số điểm theo khu, các điểm thêm/bỏ/đổi so với `nodes.json` hiện tại, mã trùng, thiếu Tên RCS, số ô có/không có toạ độ trên bản đồ.
 - Ghi `data\nodes.json` (bản cũ lưu thành `nodes.json.bak`). **Tool đang chạy tự nạp lại trong vòng 10 giây.**
 **Kiểm tra lần đầu:** toạ độ `devicePostionRec` RCS gửi đang giả định là mm cùng hệ với bản đồ. Khi có dữ liệu thật, robot phải nằm trên đường đi. Nếu lệch đều một khoảng, chỉnh `xy_offset_mm` trong `config.json`. Nếu RCS không gửi toạ độ, tool lấy toạ độ từ mã điểm `devicePosition` (kém chính xác hơn).
 
@@ -149,6 +165,7 @@ Cấu hình riêng của máy, không đưa lên git (tự tạo từ `config.ex
 - `alarm_active_minutes`: cảnh báo coi là "đang xảy ra" nếu mới báo trong số phút này và chưa có `alarmStatus=1`.
 - `nodes_file` (`data/nodes.json`): bảng điểm highbay (cùng file với ManualControl2) để dịch mã điểm ra tên ô. Tạo bằng `update_names.py`.
 - `rcs_api`: tool hỏi RCS định kỳ (xem phần trên). `map_model`: loại xe dùng khi cập nhật bản đồ.
+- `route_jump_mm` (3000): khi vẽ đường đi, đoạn nối hai điểm dài hơn số này (mm) và nằm chéo thì bỏ không vẽ.
 - `log_push`, `log_api`: lưu nguyên bản tin RCS đẩy lên / phản hồi API RCS (xem phần Log).
 
 ## Lưu ý
@@ -163,8 +180,8 @@ Cấu hình riêng của máy, không đưa lên git (tự tạo từ `config.ex
 | `config.example.json` | Cấu hình mẫu (đưa lên git) |
 | `config.json` | Cấu hình của máy (alias robot, rcs_api, ngưỡng cảnh báo...), tự tạo từ mẫu, không đưa lên git |
 | `src` | Tool chính: `main.py` (nhận dữ liệu, hỏi RCS, web), `rcs_api.py` (gọi API RCS, xác thực WSSE), `cfg.py` (nạp config mẫu + config máy, lưu user/password RCS), `index.html` (giao diện) |
-| `tools` | Công cụ phụ: `update_map.bat/.py` (cập nhật bản đồ), `build_map.py` (dựng ảnh bản đồ, update_map gọi), `update_names.bat/.py` (cập nhật tên điểm từ Excel), `simulate.py` (gửi dữ liệu giả), `firewall_open.bat` (mở cổng) |
+| `tools` | Công cụ phụ (nút trên web cũng gọi các công cụ này): `update_map.bat/.py` (cập nhật bản đồ), `build_map.py` (dựng ảnh bản đồ, update_map gọi), `update_names.bat/.py` (cập nhật tên điểm từ Excel), `simulate.py` (gửi dữ liệu giả), `firewall_open.bat` (mở cổng) |
 | `data` | Dữ liệu tool đang dùng: `nodes.json` (tên ô highbay), `hints.json` (bảng mã lỗi + cách xử lý), `map` (`map.png`, `points.json`, `map_meta.json`, `backup`) |
-| `raw` | Dữ liệu gốc đầu vào: file map xuất từ RCS (`.zip`), file Excel mapping highbay. Bỏ file mới vào đây rồi chạy công cụ trong `tools` |
+| `raw` | Dữ liệu gốc đầu vào: file map xuất từ RCS (`.zip`), file Excel mapping highbay. `raw\upload\`: file tải lên/tải từ RCS qua nút trên web (không đưa lên git) |
 | `docs` | Tài liệu giao thức RCS V3.0.6 (PDF) |
 | `logs` | Log theo ngày (tự tạo, không đưa lên git) |

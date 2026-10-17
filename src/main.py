@@ -7,6 +7,8 @@ import json
 import os
 import re
 import shutil
+import subprocess
+import sys
 import time
 from collections import deque
 from contextlib import asynccontextmanager
@@ -521,12 +523,35 @@ async def rcs_poller():
         await asyncio.sleep(1)
 
 
-def route_view(name):
+def is_jump(a, b):
+    """Hai điểm liền nhau cách xa và nằm chéo (không chạy dọc lối đi) -> không vẽ đoạn nối thẳng (tránh đường chéo cắt ngang bản đồ)."""
+    dx, dy = abs(b[0] - a[0]), abs(b[1] - a[1])
+    d = (dx * dx + dy * dy) ** 0.5
+    return d > float(CFG.get("route_jump_mm", 3000)) and min(dx, dy) > 0.17 * d       # lệch trục > ~10 độ
+
+
+def route_view(name, xy=None):
+    """Đường đi còn lại của robot: bỏ các điểm đã đi qua (trước điểm gần robot nhất), cắt thành nhiều đoạn ở chỗ nhảy chéo."""
     r = ROUTES.get(name)
     if not r or not r["nodes"]:
         return None
-    to = r["nodes"][-1][0]
-    return {"count": len(r["nodes"]), "to": to, "to_place": place(to), "px": [p for p in (to_pixel(n[1:]) for n in r["nodes"]) if p]}
+    nodes = r["nodes"]
+    if xy:
+        i = min(range(len(nodes)), key=lambda k: (nodes[k][1] - xy[0]) ** 2 + (nodes[k][2] - xy[1]) ** 2)
+        nodes = nodes[i:]
+    segs, cur, prev = [], [], None
+    if xy and not is_jump(xy, nodes[0][1:]):                     # nối từ robot tới điểm kế tiếp nếu gần
+        cur, prev = [to_pixel(xy)], xy
+    for n in nodes:
+        if prev is not None and is_jump(prev, n[1:]):
+            segs.append(cur)
+            cur = []
+        cur.append(to_pixel(n[1:]))
+        prev = n[1:]
+    segs.append(cur)
+    segs = [[p for p in sg if p] for sg in segs]
+    to = nodes[-1][0]
+    return {"count": len(nodes), "to": to, "to_place": place(to), "segs": [sg for sg in segs if len(sg) > 1], "end": to_pixel(nodes[-1][1:])}
 
 
 # ---------------------------------------------------------------- nhận callback từ RCS
@@ -628,7 +653,7 @@ def robots_view():
         d = {**{k: v for k, v in r.items() if not k.startswith("_")}, "age": int(age), "lost": lost,
              "status_name": ROBOT_STATUS.get(r["status"], r["state"] or "?"), "place": robot_place(r), "path_text": r["path"]}
         d["map"] = to_pixel(robot_xy(r))
-        d["route"] = route_view(r["name"])
+        d["route"] = route_view(r["name"], robot_xy(r))
         d["preds"] = predict(d, now)
         out.append(d)
     for name in CFG.get("robots", []):          # robot khai trong config nhưng chưa có dữ liệu
@@ -668,6 +693,86 @@ async def api_rcs_map(request: Request):
     incident("system", "low", "Đã tải map từ RCS", f"{name} · {len(blob) // 1024} KB")
     return Response(blob, media_type="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
+
+
+# ---------------------------------------------------------------- nút cập nhật map / highbay (chạy tools\update_map.py, update_names.py)
+UPLOAD_DIR = os.path.join(ROOT, "raw", "upload")    # file map/highbay tải lên hoặc tải từ RCS (không đưa lên git)
+JOB = asyncio.Lock()                                # mỗi lúc chỉ chạy một việc cập nhật
+
+
+def run_tool(script, *args):
+    """Chạy công cụ trong thư mục tools bằng tiến trình con, trả về (mã thoát, nội dung in ra)."""
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    p = subprocess.run([sys.executable, os.path.join(ROOT, "tools", script), *args], cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
+    return p.returncode, (p.stdout + "\n" + p.stderr).strip()
+
+
+def save_upload(prefix, ext, blob):
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    path = os.path.join(UPLOAD_DIR, f"{prefix}_{time.strftime('%Y%m%d-%H%M%S')}{ext}")
+    with open(path, "wb") as f:
+        f.write(blob)
+    return path
+
+
+def reload_now():
+    what = reload_if_changed()
+    if what:
+        incident("system", "low", "Đã nạp lại " + " và ".join(what), (f"Bản đồ: {MAP.get('source')}" if MAP and MAP.get("source") and "bản đồ" in what[-1] else ""))
+
+
+async def api_map_update(request: Request):
+    """Nút "Cập nhật map": tải map zip từ RCS (hoặc file zip người dùng tải lên), tách ảnh nền + topology, thay bản đồ đang hiển thị."""
+    if JOB.locked():
+        return J({"error": "đang có một cập nhật khác chạy, chờ xong rồi bấm lại"}, 409)
+    async with JOB:
+        if request.query_params.get("src") == "file":
+            blob = await request.body()
+            if not blob.startswith(b"PK"):
+                return J({"error": "file tải lên không phải file zip"}, 400)
+            path = save_upload("map", ".zip", blob)
+        else:
+            if not API_ON:
+                return J({"error": "đang tắt rcs_api trong config.json"}, 400)
+            try:
+                _, blob = await asyncio.to_thread(rcs_map_fetch)
+            except rcs_api.RcsAuthError as e:
+                AUTH.update(need=True, ts=time.time(), err=str(e)[:300])
+                return J({"error": str(e), "auth": True}, 401)
+            except Exception as e:
+                return J({"error": str(e)}, 502)
+            if not blob.startswith(b"PK"):
+                return J({"error": f"RCS trả về file không phải zip ({len(blob)} byte): {blob[:120].decode('utf-8', 'replace')}"}, 502)
+            path = save_upload(f"rcs_map_area{API.get('area_id')}", ".zip", blob)
+        try:
+            code, out = await asyncio.to_thread(run_tool, "update_map.py", path)
+        except Exception as e:
+            code, out = -1, f"{type(e).__name__}: {e}"
+        rel = os.path.relpath(path, ROOT)
+        if code == 0:
+            reload_now()
+            incident("system", "low", "Đã cập nhật bản đồ", f"từ {rel}")
+        else:
+            incident("system", "mid", "Cập nhật bản đồ lỗi", out.splitlines()[-1] if out else rel)
+        return J({"ok": code == 0, "log": out, "file": rel, "error": "" if code == 0 else "cập nhật bản đồ không thành công, xem chi tiết bên dưới"})
+
+
+async def api_highbay(request: Request):
+    """Nút "Cập nhật highbay": body = file Excel mapping .xlsx -> bóc tách, ghi nodes.json, nạp lại ngay."""
+    if JOB.locked():
+        return J({"error": "đang có một cập nhật khác chạy, chờ xong rồi bấm lại"}, 409)
+    async with JOB:
+        blob = await request.body()
+        if not blob.startswith(b"PK"):
+            return J({"error": "file tải lên không phải file Excel .xlsx"}, 400)
+        path = save_upload("highbay", ".xlsx", blob)
+        code, out = await asyncio.to_thread(run_tool, "update_names.py", path)
+        rel = os.path.relpath(path, ROOT)
+        if code == 0:
+            reload_now()
+            incident("system", "low", "Đã cập nhật bảng highbay", f"từ {rel}")
+        return J({"ok": code == 0, "log": out, "file": rel, "error": "" if code == 0 else "không đọc được file, xem chi tiết bên dưới"})
 
 
 async def api_rcs_auth(request: Request):
@@ -779,9 +884,7 @@ async def watchdog():
         if c["last"] and now - c["last"] > float(CFG.get("silence_warn_sec", 120)) and not FLAGS["silent"]:
             FLAGS["silent"] = True
             incident("system", "high", "RCS ngừng gửi dữ liệu trạng thái robot", f"Lần cuối {now_s(c['last'])}. Kiểm tra mạng/RCS hoặc tool này.")
-        what = reload_if_changed()
-        if what:
-            incident("system", "low", "Đã nạp lại " + " và ".join(what), (f"Bản đồ: {MAP.get('source')}" if MAP and MAP.get("source") and "bản đồ" in what[-1] else ""))
+        reload_now()
         if now - last_clean > 3600:
             last_clean = now
             cleanup_logs()
@@ -819,7 +922,8 @@ async def lifespan(app):
 rcs_routes = []
 routes = [Route("/", index), Route("/api/state", api_state), Route("/api/incidents", api_incidents), Route("/api/tasks", api_tasks),
           Route("/api/system", api_system), Route("/api/map", api_map), Route("/map/map.png", map_file), Route("/api/history", api_history), Route("/logs/{date}/{file}", download),
-          Route("/api/rcs-auth", api_rcs_auth, methods=["POST"]), Route("/api/rcs-map", api_rcs_map)]
+          Route("/api/rcs-auth", api_rcs_auth, methods=["POST"]), Route("/api/rcs-map", api_rcs_map),
+          Route("/api/map-update", api_map_update, methods=["POST"]), Route("/api/highbay", api_highbay, methods=["POST"])]
 def make_receiver(kind):
     async def handler(request: Request):
         return await receive(request, kind)

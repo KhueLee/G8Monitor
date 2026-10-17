@@ -24,6 +24,8 @@ dialog::backdrop{background:rgba(15,23,42,.45)}
 dialog h3{margin:0 0 6px;font-size:18px}dialog label{display:block;font-size:14px;margin-top:10px;color:var(--mut)}
 dialog input{width:100%;margin-top:4px}dialog .acts{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
 button.sm.pri{background:var(--g);color:#fff}
+button.sm:disabled{opacity:.5}
+pre.log{background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px;max-height:320px;overflow:auto;margin:6px 0 8px}
 #conn{font-size:12px;font-weight:600;padding:3px 10px;border-radius:99px;background:rgba(255,255,255,.2)}
 #conn.bad{background:#c2261c}#conn.ok{background:#157f3b}
 main{max-width:900px;margin:0 auto;padding:12px}
@@ -141,10 +143,18 @@ a{color:var(--g)}
   <div class="bar"><input type="date" id="hDate"><select id="hKind"><option value="incident">Sự cố</option><option value="alarm">Cảnh báo</option><option value="task">Task</option><option value="agv">Robot</option><option value="path">Đường đi robot</option><option value="order">Task (getOrderList)</option><option value="push">RCS đẩy lên (nguyên bản tin)</option><option value="api">API RCS trả về (nguyên phản hồi)</option><option value="raw">Dữ liệu lỗi/không đọc được</option></select>
   <input id="hQ" placeholder="Tìm (vd. LT03, 8039)"><button class="sm" id="hGo">Xem</button></div>
   <div class="tw"><table id="hist"></table></div>
-  <h2>🗺️ Tải map từ RCS</h2>
-  <div class="mut" style="margin:-4px 2px 8px">Tải file map hiện tại của RCS (area đang khai) về máy này. File zip dùng để cập nhật bản đồ tool (kéo thả vào tools\update_map.bat).</div>
-  <div class="bar"><button class="sm" id="mapBtn">⬇️ Tải map (.zip)</button></div>
+  <h2>🗺️ Bản đồ</h2>
+  <div class="mut" style="margin:-4px 2px 8px"><b>Cập nhật map từ RCS</b>: tool tải map zip từ RCS, tách ảnh nền và topology (toạ độ điểm), thay bản đồ đang hiển thị. Map RCS thiếu ảnh nền thì xuất map từ RCS ra file zip rồi dùng <b>Cập nhật từ file zip</b>. <b>Tải map về máy</b>: chỉ lưu file zip của RCS về máy đang xem.</div>
+  <div class="bar"><button class="sm pri" id="mapUpd">🔄 Cập nhật map từ RCS</button><button class="sm" id="mapUpFile">📤 Cập nhật từ file zip</button><button class="sm" id="mapBtn">⬇️ Tải map (.zip) về máy</button></div>
+  <input type="file" id="mapFile" accept=".zip" hidden>
   <div class="mut" id="mapDl"></div>
+  <pre class="log" id="mapLog" hidden></pre>
+  <h2>🏷️ Highbay (mapping node ↔ tên ô)</h2>
+  <div class="mut" style="margin:-4px 2px 8px">Tải file Excel mapping highbay lên (sheet đầu, cột Khu, Dãy, Node, Tên RCS, Tầng 1–4). Tool bóc tách và cập nhật ngay, để vị trí robot, điểm task, vị trí lỗi hiện theo tên ô người vận hành quen dùng (vd. D36-12).</div>
+  <div class="bar"><button class="sm" id="hbUp">📤 Tải file highbay (.xlsx)</button></div>
+  <input type="file" id="hbFile" accept=".xlsx" hidden>
+  <div class="mut" id="hbMsg"></div>
+  <pre class="log" id="hbLog" hidden></pre>
   <h2>⬇️ Tải file log</h2><div id="files"></div>
 </section>
 </main>
@@ -268,6 +278,21 @@ async function loadHist(){
   if(!r.rows.length)H.append(el("tr",null,"Không có dữ liệu"));
 }
 $("#hGo").onclick=loadHist;
+async function post(url,body){const r=await fetch(url,{method:"POST",body}).catch(()=>null);if(!r)return{error:"Mất kết nối tool"};
+  const d=await r.json().catch(()=>({error:"Lỗi "+r.status}));if(d.auth){const s=await J("/api/state");checkAuth(s&&s.auth,true)}return d}
+function showLog(q,t){const p=$(q);p.hidden=!t;p.textContent=t||""}
+function busy(on){["#mapUpd","#mapUpFile","#mapBtn","#hbUp"].forEach(q=>$(q).disabled=on)}
+async function mapUpdate(file){const N=$("#mapDl");busy(true);showLog("#mapLog","");
+  N.textContent=(file?"Đang tải "+file.name+" lên":"Đang tải map từ RCS")+" và dựng lại bản đồ (có thể mất 1–2 phút)…";
+  const d=await post("/api/map-update"+(file?"?src=file":""),file);busy(false);
+  N.textContent=d.ok?"✔ Đã cập nhật bản đồ ("+d.file+"). Bản đồ trên web đã nạp lại.":"⚠ "+(d.error||"Cập nhật lỗi");showLog("#mapLog",d.log);if(d.ok){initMap();loadSys()}}
+$("#mapUpd").onclick=()=>mapUpdate(null);
+$("#mapUpFile").onclick=()=>$("#mapFile").click();
+$("#mapFile").onchange=e=>{const f=e.target.files[0];e.target.value="";if(f)mapUpdate(f)};
+$("#hbUp").onclick=()=>$("#hbFile").click();
+$("#hbFile").onchange=async e=>{const f=e.target.files[0];e.target.value="";if(!f)return;showLog("#hbLog","");
+  $("#hbMsg").textContent="Đang bóc tách và cập nhật "+f.name+"…";busy(true);const d=await post("/api/highbay",f);busy(false);
+  $("#hbMsg").textContent=d.ok?"✔ Đã cập nhật bảng highbay từ "+f.name+".":"⚠ "+(d.error||"Lỗi");showLog("#hbLog",d.log);if(d.ok)loadSys()};
 $("#mapBtn").onclick=async()=>{const N=$("#mapDl"),b=$("#mapBtn");
   b.disabled=true;N.textContent="Đang hỏi RCS và tải map…";
   try{const r=await fetch("/api/rcs-map");
@@ -312,12 +337,12 @@ function selectRobot(name,center){M.sel=name;drawMarkers();drawInfo();if(center)
 function worst(r){return r.preds.length?r.preds[0].level:null}
 function drawRoutes(){
   const S=$("#routes"),NS="http://www.w3.org/2000/svg";S.replaceChildren();
-  M.robots.forEach(r=>{const t=r.route;if(!t||!t.px.length)return;const sel=M.sel===r.name;
-    const pts=(r.map?[r.map]:[]).concat(t.px);const pl=document.createElementNS(NS,"polyline");
-    pl.setAttribute("points",pts.map(p=>p.join(",")).join(" "));pl.setAttribute("fill","none");pl.setAttribute("stroke",colorOf(r));
-    pl.setAttribute("stroke-width",sel?5:3);pl.setAttribute("stroke-opacity",sel?.95:.55);pl.setAttribute("stroke-linejoin","round");pl.setAttribute("stroke-dasharray",sel?"":"8 6");
-    pl.setAttribute("vector-effect","non-scaling-stroke");S.append(pl);
-    const e=t.px[t.px.length-1],c=document.createElementNS(NS,"circle");c.setAttribute("cx",e[0]);c.setAttribute("cy",e[1]);c.setAttribute("r",6/M.s);
+  M.robots.forEach(r=>{const t=r.route;if(!t||!t.end)return;const sel=M.sel===r.name;
+    t.segs.forEach(sg=>{const pl=document.createElementNS(NS,"polyline");
+      pl.setAttribute("points",sg.map(p=>p.join(",")).join(" "));pl.setAttribute("fill","none");pl.setAttribute("stroke",colorOf(r));
+      pl.setAttribute("stroke-width",sel?5:3);pl.setAttribute("stroke-opacity",sel?.95:.55);pl.setAttribute("stroke-linejoin","round");pl.setAttribute("stroke-dasharray",sel?"":"8 6");
+      pl.setAttribute("vector-effect","non-scaling-stroke");S.append(pl)});
+    const e=t.end,c=document.createElementNS(NS,"circle");c.setAttribute("cx",e[0]);c.setAttribute("cy",e[1]);c.setAttribute("r",6/M.s);
     c.setAttribute("fill","#fff");c.setAttribute("stroke",colorOf(r));c.setAttribute("stroke-width",3);c.setAttribute("vector-effect","non-scaling-stroke");S.append(c)});
 }
 function drawMarkers(){

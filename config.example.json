@@ -45,6 +45,7 @@
   ],
   "stuck_sec": 180,
   "stuck_move_mm": 500,
+  "route_jump_mm": 3000,
   "charge_stall_min": 30,
   "task_fail_minutes": 30,
   "_map_note": "Toạ độ robot RCS gửi (devicePostionRec) đang giả định là mm cùng hệ với bản đồ. Nếu robot hiện lệch đều một khoảng so với đường đi, chỉnh xy_offset_mm.",
