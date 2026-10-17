@@ -1,6 +1,6 @@
 # G8 Monitor – theo dõi robot và giám sát lỗi (giai đoạn 1: thu thập dữ liệu RCS)
 
-RCS/ICS **tự đẩy** dữ liệu lên tool này (trạng thái robot, cảnh báo, task). Tool còn **tự hỏi RCS** (máy RCS `192.168.110.100`, area 2, mặc định bật) đường đi robot, danh sách task và bản đồ. Tool lưu log theo ngày và hiển thị trên web tiếng Việt (dùng được trên điện thoại).
+RCS/ICS **tự đẩy** dữ liệu lên tool này (trạng thái robot, cảnh báo, task). Tool còn **tự hỏi RCS** (máy RCS `192.168.110.100`, area 2, mặc định bật) đường đi robot và danh sách task, và tải map RCS khi bấm nút. Tool lưu log theo ngày và hiển thị trên web tiếng Việt (dùng được trên điện thoại).
 
 ## Cài Git và tải tool về máy client (PC chạy tool)
 1. **Cài Git**: tải Git for Windows tại https://git-scm.com/download/win (bản 64-bit), chạy file cài, để mặc định và bấm Next đến hết. Ở bước "Adjusting your PATH environment" giữ lựa chọn **Git from the command line and also from 3rd-party software**.
@@ -39,6 +39,18 @@ RCS → Configuration Management → System Configuration → **Third-party Serv
 | Trạng thái task | `http://192.168.110.189:5502/ics/task-status` | Chỉ báo ở node đã cấu hình trong mẫu task (3.2.1) |
 
 Tool luôn trả `{"code":1000,"desc":"success"}` để RCS không gửi lại liên tục.
+Cổng 5502 chỉ nhận 3 đường dẫn trên; cổng 5503 chỉ phục vụ web. Thử không cần RCS: `python tools\simulate.py --loop` (gửi dữ liệu giả vào 5502).
+
+## Các API tool gọi lên RCS
+Chỉ gọi **API đọc**, không gửi lệnh nào cho robot (không tạo/huỷ task, không điều khiển xe), nên không ảnh hưởng vận hành. Mọi API là HTTP POST JSON tới `http://192.168.110.100:7000`.
+
+| API (mục tài liệu) | Đường dẫn | Nội dung gửi | Khi nào gọi | Dùng để |
+|---|---|---|---|---|
+| getRobotTaskPath (4.1.2.5) | `/ics/out/getRobotTaskPath` | `{"areaId":2}` | mỗi 5 giây (`path_sec`) | Đường đi từng robot, vẽ trên bản đồ |
+| getOrderList (4.1.1.7) | `/ics/out/task/getOrderList` | `{"areaId":2,"StartPage":"1","pageSize":"50"}` | mỗi 30 giây (`order_sec`) | 50 task mới nhất và trạng thái |
+| topologyList (4.1.5.1) | `/ics/out/topologyList` | `{"areaId":2}` | chỉ khi bấm **Tải map (.zip)** hoặc chạy `update_map.py --rcs` | Lấy link tải file map |
+
+Sau topologyList, tool tải file map bằng HTTP GET theo link RCS trả về (máy chủ file RCS, cổng 8888). Đây là file tĩnh, không phải API.
 
 ## Tool hỏi RCS định kỳ (getRobotTaskPath, getOrderList)
 **Mặc định bật**, khai trong `config.json` → `rcs_api`:
@@ -49,41 +61,50 @@ Tool luôn trả `{"code":1000,"desc":"success"}` để RCS không gửi lại l
 | `base` | `http://192.168.110.100:7000` | `http://<IP máy RCS>:7000` (cổng API RCS 7000) |
 | `area_id` | `2` | Area ID trên RCS (số khu vực bản đồ) |
 | `user`, `password` | trống | Chỉ cần khi RCS bật xác thực WSSE (mục 2.3 tài liệu). Xem mục **User/password RCS** bên dưới |
-| `path_sec` | `5` | Hỏi **getRobotTaskPath** (4.1.2.5) mỗi bao nhiêu giây |
-| `order_sec`, `order_page_size` | `30`, `50` | Hỏi **getOrderList** (4.1.1.7) mỗi 30 giây, lấy 50 task mới nhất |
+| `path_sec` | `5` | Hỏi **getRobotTaskPath** mỗi bao nhiêu giây. Nên ≥ 3 để RCS không tải nặng |
+| `order_sec`, `order_page_size` | `30`, `50` | Hỏi **getOrderList** mỗi 30 giây, lấy 50 task mới nhất |
 | `timeout_sec` | `8` | Chờ RCS trả lời tối đa bao nhiêu giây |
 
-Đặt `0` để tắt từng loại. Đây là các API **chỉ đọc**, tool không ra lệnh cho robot.
-
-**Tải map từ RCS (topologyList, 4.1.5.1)**: không gọi định kỳ, chỉ gọi khi bấm nút **⬇️ Tải map (.zip)** ở tab **Hệ thống → Tải map từ RCS**. API này không trả bản đồ, chỉ trả link tải:
-```
-{"code":1000, "data":{"mapId":2,
-  "mapZipUrl":"http://<IP RCS>:8888/textureMap/2/default/Map/commonTopo.zip?token=...",
-  "mapJsonUrl":"http://<IP RCS>:8888/textureMap/2/default/Map/compress.json?token=..."}}
-```
-- Bấm nút: tool gọi topologyList rồi tải file theo link `mapZipUrl` (map nén: topo và ảnh nền; `mapJsonUrl` không dùng), trình duyệt lưu về máy đang xem web với tên `rcs_map_area2_YYYYMMDD-HHMM.zip`. Kéo thả file này vào `tools\update_map.bat` để cập nhật bản đồ tool.
-- Mỗi lần tải ghi vào `api.jsonl` (phản hồi topologyList và dung lượng file) và tab Sự cố. RCS đòi user/password thì hiện cửa sổ nhập như dưới.
-
-**User/password RCS:** mạng nội bộ RCS thường tắt xác thực nên để trống. Nếu RCS bật xác thực và từ chối tool (HTTP 401/403, hoặc trả lỗi có chữ auth/token/login...), **giao diện web tự hiện cửa sổ "RCS yêu cầu đăng nhập"**. Nhập user/password của RCS (hỏi người quản trị RCS) → **Lưu và thử lại**: tool ghi vào `config.json` của máy và hỏi RCS lại ngay, không cần restart. Bấm **Để sau** thì 10 phút sau mới hỏi lại. Muốn nhập/đổi chủ động: tab **Hệ thống → Tool hỏi RCS định kỳ → Nhập user/password RCS**. `update_map.py --rcs` gặp lỗi xác thực thì hỏi user/password ngay trong cửa sổ cmd.
-Password lưu dạng chữ thường trong `config.json` (không đưa lên git); trang web chỉ dùng trong LAN, ai mở được web cũng đổi được user/password này.
+Đặt `0` để tắt từng loại.
 - **Đường đi robot**: vẽ trên bản đồ (nét đứt, chọn robot thì nét đậm, vòng tròn trắng là điểm đích), hiện "Đường đi: N điểm → đích (tên ô)" ở thẻ robot. Log `path.jsonl` chỉ ghi khi robot nhận **đường mới hoặc bị đổi tuyến** (`reroute=true`), không ghi mỗi lần đường rút ngắn.
 - **Danh sách task**: tab Task có mục "Task đang có trên RCS" (chưa gửi/đang gửi/đang chạy/lỗi). Log `order.jsonl` ghi mỗi khi task đổi trạng thái. Task chuyển sang gửi lỗi/chạy lỗi mà callback chưa báo thì tạo sự cố.
 - Không gọi được API thì tạo sự cố một lần, gọi lại được cũng báo. Tình trạng từng API xem ở tab **Hệ thống → Tool hỏi RCS định kỳ**.
-Cổng 5502 chỉ nhận 3 đường dẫn trên; cổng 5503 chỉ phục vụ web. Thử không cần RCS: `python tools\simulate.py --loop` (gửi dữ liệu giả vào 5502).
-Vị trí robot hiển thị theo **ô highbay gần nhất** (dạng `D36-16`, ví dụ "Gần D36-16 (Kho 2500)"); trên bản đồ vẫn đặt theo toạ độ.
 
-Robot theo dõi: LT01–LT05, FK02 (khai ở `robots` trong config.json; robot chưa có dữ liệu vẫn hiện thẻ "Chưa nhận dữ liệu").
+## Tải map từ RCS (nút trên web)
+Tab **Hệ thống → Tải map từ RCS → ⬇️ Tải map (.zip)**. Không gọi định kỳ, chỉ khi bấm nút.
+1. Tool gọi **topologyList**. API này không trả bản đồ, chỉ trả link tải:
+   ```
+   {"code":1000, "data":{"mapId":2,
+     "mapZipUrl":"http://<IP RCS>:8888/textureMap/2/default/Map/commonTopo.zip?token=...",
+     "mapJsonUrl":"http://<IP RCS>:8888/textureMap/2/default/Map/compress.json?token=..."}}
+   ```
+2. Tool tải file theo link `mapZipUrl` (map nén: topo và ảnh nền; `mapJsonUrl` không dùng).
+3. Trình duyệt lưu file về máy đang mở web, tên `rcs_map_area2_YYYYMMDD-HHMM.zip`. Kéo thả file này vào `tools\update_map.bat` để cập nhật bản đồ tool (xem phần **Cập nhật bản đồ** bên dưới).
+
+Mỗi lần tải ghi vào `api.jsonl` (phản hồi topologyList, link, dung lượng file) và tab Sự cố. RCS đòi user/password thì hiện cửa sổ nhập như dưới, nhập xong bấm tải lại.
+
+## User/password RCS
+Mạng nội bộ RCS thường tắt xác thực nên để trống. Nếu RCS bật xác thực và từ chối tool (HTTP 401/403, hoặc trả lỗi có chữ auth/token/login...), **giao diện web tự hiện cửa sổ "RCS yêu cầu đăng nhập"**.
+- Nhập user/password của RCS (hỏi người quản trị RCS) → **Lưu và thử lại**: tool ghi vào `config.json` của máy và hỏi RCS lại ngay, không cần restart.
+- Bấm **Để sau** thì 10 phút sau mới hỏi lại.
+- Muốn nhập/đổi chủ động: tab **Hệ thống → Tool hỏi RCS định kỳ → Nhập user/password RCS**.
+- `update_map.py --rcs` gặp lỗi xác thực thì hỏi user/password ngay trong cửa sổ cmd.
+- Tool gắn header xác thực WSSE vào các lệnh gọi API. Lệnh tải file map không cần, vì link đã có `token`.
+
+Password lưu dạng chữ thường trong `config.json` (không đưa lên git); trang web chỉ dùng trong LAN, ai mở được web cũng đổi được user/password này.
 
 ## Giao diện
 Chọn giao diện bằng **nút sổ xuống** ở góc trái thanh trên cùng (hiện tên giao diện đang xem, ví dụ "🗺️ Bản đồ ▼"); chấm đỏ trên nút là số lỗi/cảnh báo đang có. Trình duyệt nhớ giao diện xem lần cuối. Thêm giao diện mới: thêm một `<button data-t="...">` trong `#menu` và một `<section class="tab">` trong `src\index.html`.
 - **Bản đồ** (mặc định): ảnh bản đồ nhà máy (dựng từ map RCS), kéo để di chuyển, hai ngón/cuộn chuột để zoom, nút + − ⤢ (⤢ = vừa khung). Chỉ là ảnh, không tương tác node/edge. Robot là chấm tròn có tên, **màu theo trạng thái** (xanh lá: đang chạy, xanh dương: rảnh, tím: sạc, đỏ nhấp nháy: lỗi, xám: mất tín hiệu/offline; viền cam hoặc dấu ! khi có cảnh báo). Vị trí cập nhật mỗi 3 giây, không chạy mượt.
   Chạm robot (hoặc bấm tên robot ở hàng trên) → **thanh thông báo** hiện trạng thái, vị trí (tên ô), task và **lỗi dự đoán**; thanh đỏ trên cùng liệt kê robot đang có lỗi nặng.
+  Vị trí robot hiển thị theo **ô highbay gần nhất** (dạng `D36-16`, ví dụ "Gần D36-16 (Kho 2500)"); trên bản đồ vẫn đặt theo toạ độ.
 - **Robot**: thẻ từng robot (trạng thái, pin, vị trí → tên ô highbay, task, kệ, "cập nhật x giây trước"). Lỗi tô đỏ, mất tín hiệu tô vàng.
 - **Sự cố**: cảnh báo đang xảy ra (kèm mã lỗi như 8039, gợi ý của RCS) và dòng thời gian sự cố.
 - **Task**: task đang có trên RCS (getOrderList) và trạng thái task RCS báo (kể cả gửi lỗi/chạy lỗi).
 - **Hệ thống**: lần cuối nhận từng loại dữ liệu, tình trạng các API tool hỏi RCS (kèm nút nhập user/password RCS), bản đồ đang dùng, xem log theo ngày/loại/từ khóa, **nút tải map từ RCS** (.zip), tải file log.
 
 Thanh trên cùng: xanh "Đang nhận dữ liệu"; đỏ "RCS im lặng ..." nếu quá `silence_warn_sec` không có tin robot.
+Robot theo dõi: LT01–LT05, FK02 (khai ở `robots` trong config.json; robot chưa có dữ liệu vẫn hiện thẻ "Chưa nhận dữ liệu").
 
 ## Lỗi dự đoán (thanh thông báo trên bản đồ)
 Suy ra từ dữ liệu RCS gửi, kèm cách xử lý bằng tiếng Việt (bảng mã lỗi trong `data\hints.json`, có thể sửa):
@@ -92,7 +113,7 @@ cảnh báo RCS đang xảy ra (mã 8039, 8024, 25216...) · robot Fault chưa c
 ## Cập nhật bản đồ khi map RCS đổi (`tools\update_map.py`)
 Cần `pip install pillow numpy`. Hai cách:
 - **Từ file map xuất từ RCS** (hoặc file tải bằng nút **Tải map (.zip)** ở tab Hệ thống): kéo thả file zip (vd. `raw\3-map2 (29).zip`) vào `tools\update_map.bat`, hoặc chạy `python tools\update_map.py "raw\3-map2 (29).zip"`. Zip lồng zip (RTA-C060..., RTA-C100..., RTA-FD200...) tự giải nén. Thư mục đã giải nén cũng được.
-- **Tải thẳng từ RCS**: `python tools\update_map.py --rcs` (hoặc chạy `tools\update_map.bat` không kéo file), dùng API topologyList với `rcs_api` trong config. Nếu file RCS trả về không có ảnh nền `.pgm` thì dùng cách thứ nhất.
+- **Tải thẳng từ RCS trên máy chạy tool**: `python tools\update_map.py --rcs` (hoặc chạy `tools\update_map.bat` không kéo file), dùng API topologyList với `rcs_api` trong config. Nếu file RCS trả về không có ảnh nền `.pgm` thì dùng cách thứ nhất.
 
 Tuỳ chọn: `--list` chỉ xem trong file có những map nào; `--model RTA-C100` chọn map loại xe khác (mặc định `map_model` trong config, là `RTA-C060`); `--scale 3` hệ số thu nhỏ ảnh.
 Công cụ tạo lại `data\map\map.png`, `points.json` (toạ độ điểm), `map_meta.json`. Bản đồ cũ được sao lưu vào `data\map\backup\` (giữ 5 bản gần nhất). Công cụ cũng kiểm tra các ô highbay trong `data\nodes.json` có trên bản đồ mới không. **Tool đang chạy tự nạp bản đồ mới trong vòng 10 giây, không cần restart.** Tải lại trang web để thấy ảnh mới.
@@ -133,7 +154,7 @@ Cấu hình riêng của máy, không đưa lên git (tự tạo từ `config.ex
 ## Lưu ý
 - Tài liệu V3.0.6 không có trường "đã xử lý" của cảnh báo, nên tool dựa vào thời gian (`alarm_active_minutes`) và trạng thái robot.
 - Giai đoạn này chỉ trong LAN, chưa có đăng nhập. Truy cập từ xa (VPN/Tailscale) và thông báo Telegram để giai đoạn sau.
-- Ngoài nhận dữ liệu RCS đẩy lên, tool chỉ gọi API đọc: getRobotTaskPath, getOrderList định kỳ và topologyList khi bấm tải map; không gửi lệnh, nên không ảnh hưởng vận hành. Nên để `path_sec` ≥ 3 giây để không làm RCS tải nặng.
+- Ngoài nhận dữ liệu RCS đẩy lên, tool chỉ gọi API đọc (xem **Các API tool gọi lên RCS**), không gửi lệnh nên không ảnh hưởng vận hành.
 
 ## Cấu trúc thư mục
 | Thư mục / file | Nội dung |
