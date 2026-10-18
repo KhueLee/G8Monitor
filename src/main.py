@@ -19,10 +19,14 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Route
 
+import admin
 import cfg
+import notify
 import rcs_api
+from version import VERSION
 
 HERE = os.path.dirname(os.path.abspath(__file__))                    # src/
+STATIC = os.path.join(HERE, "static")                               # logo, icon
 ROOT = cfg.ROOT                                                      # thư mục gốc project
 CFG = cfg.load()                                                     # config.example.json + config.json của máy
 LOG_DIR = CFG["log_dir"] if os.path.isabs(CFG["log_dir"]) else os.path.join(ROOT, CFG["log_dir"])
@@ -210,6 +214,7 @@ TASKS = {}                       # orderId -> sự kiện mới nhất
 INCIDENTS = deque(maxlen=600)
 CHAN = {k: {"last": 0, "count": 0, "today": 0, "day": day()} for k in ("alarm", "agv", "task")}
 FLAGS = {"silent": False}
+NOTI = notify.Notifier(CFG, cfg.save_section, write_log)       # cảnh báo Telegram, cấu hình ở trang quản trị cổng 5504
 
 
 def clean(obj):
@@ -266,13 +271,19 @@ def handle_agv(items):
                "xy": xy, "order": str(d.get("orderId") or ""), "shelf": str(d.get("shelfNumber") or d.get("shelfNum") or ""),
                "path": str(d.get("taskPath") or ""), "speed": to_int(d.get("speed")), "payload": str(d.get("payLoad") or ""), "ts": now}
         prev = ROBOTS.get(name)
+        ps = (prev or {}).get("status")
         cur = robot_xy(rec)
         rec["moved_ts"] = now
+        rec["off"] = status == 0 or state == "Offline"        # RCS thật báo offline bằng state, deviceStatus vẫn 1/5
+        rec["off_ts"] = (prev.get("off_ts") or now) if prev is not None and prev.get("off") and rec["off"] else (now if rec["off"] else None)
         if prev is not None:
             pcur = robot_xy(prev)
             if cur and pcur and ((cur[0] - pcur[0]) ** 2 + (cur[1] - pcur[1]) ** 2) ** 0.5 < float(CFG.get("stuck_move_mm", 500)):
                 rec["moved_ts"] = prev.get("moved_ts", now)
             rec["chg_ts"], rec["chg_batt"] = prev.get("chg_ts"), prev.get("chg_batt")
+        if status == 4 and ps != 4:                       # vừa nhận task: đếm đứng yên từ đây, không tính thời gian rảnh/offline trước đó
+            rec["moved_ts"] = now
+        if prev is not None:
             rec["stuck_flag"] = prev.get("stuck_flag") and rec["moved_ts"] != now
         if status == 5:                                   # theo dõi pin khi sạc
             if rec.get("chg_ts") is None or (batt is not None and rec.get("chg_batt") is not None and batt > rec["chg_batt"] + 1):
@@ -285,16 +296,16 @@ def handle_agv(items):
         else:
             if prev.get("lost"):
                 incident("robot", "low", f"{name} có tín hiệu trở lại", "", name)
-            ps = prev.get("status")
             if status != ps:
                 if status == 2:
                     incident("robot", "high", f"{name} báo LỖI", f"Vị trí: {robot_place(rec)}", name)
                 elif ps == 2:
                     incident("robot", "low", f"{name} hết lỗi", f"Trạng thái: {ROBOT_STATUS.get(status, status)}", name)
-                if status == 0:
-                    incident("robot", "mid", f"{name} mất kết nối (offline)", "", name)
-                elif ps == 0:
-                    incident("robot", "low", f"{name} online trở lại", "", name)
+            if rec["off"] and not prev.get("off"):
+                night = notify.night_info(now, NOTI.tg()["night_start"], NOTI.tg()["night_end"])[0]
+                incident("robot", "low" if night else "mid", f"{name} mất kết nối (offline)" + (" · giờ nghỉ" if night else ""), f"Vị trí cuối: {robot_place(rec)}", name)
+            elif prev.get("off") and not rec["off"]:
+                incident("robot", "low", f"{name} online trở lại", f"Offline {dur_vi(now - (prev.get('off_ts') or now))}", name)
             low = int(CFG.get("battery_low", 20))
             if batt is not None and batt < low and (prev.get("battery") is None or prev["battery"] >= low) and status != 5:
                 incident("robot", "mid", f"{name} pin thấp ({batt}%)", "", name)
@@ -311,8 +322,18 @@ def handle_agv(items):
         ROBOTS[name] = rec
 
 
-REASON_VI = {"LableNotFound": "Không thấy nhãn/mã kệ (LableNotFound)", "FreePathObstacleInPath": "Có vật cản trên đường đi (FreePathObstacleInPath)"}
+REASON_VI = {"LableNotFound": "Không thấy nhãn/mã kệ (LableNotFound)", "FreePathObstacleInPath": "Có vật cản trên đường đi (FreePathObstacleInPath)",
+             "NoLegMovingOverShift": "Chân kệ lệch khi di chuyển (NoLegMovingOverShift)"}
 DIR_VI = {"front": "phía trước", "back": "phía sau", "left": "bên trái", "right": "bên phải"}
+# chữ Trung RCS hay gửi kèm -> tiếng Việt
+CN_VI = {"空闲": "rảnh", "离线": "offline", "充电中": "đang sạc", "充电": "sạc", "任务中": "đang chạy task", "执行任务": "đang chạy task", "故障": "lỗi",
+         "初始化": "khởi động", "负载异常": "Tải bất thường", "升级中": "đang nâng cấp", "暂停": "tạm dừng"}
+NAME_VI = {"PalletIdentify": "nhận diện pallet", "RobotLocationException": "robot mất định vị", "FileUnmatch": "file map không khớp với robot"}
+
+
+def vi(s):
+    s = str(s or "")
+    return CN_VI.get(s) or next((s.replace(k, v) for k, v in CN_VI.items() if k in s), s)
 
 
 def parse_alarm_desc(desc):
@@ -320,30 +341,59 @@ def parse_alarm_desc(desc):
     try:
         j = json.loads(desc)
     except Exception:
-        return desc, "", "", None
+        return vi(desc), "", "", None
     if not isinstance(j, dict):
-        return desc, "", "", None
+        return vi(desc), "", "", None
     pos = j.get("Position")
     if isinstance(pos, str):
         try:
             pos = json.loads(pos)
         except Exception:
             pos = None
+    if not (isinstance(pos, list) and len(pos) == 2) and isinstance(j.get("RobotPosition"), list) and len(j["RobotPosition"]) >= 2:
+        pos = j["RobotPosition"][:2]                          # cảnh báo sạc chỉ có RobotPosition [x, y, góc]
     parts = []
     rd = str(j.get("ReasonDesc") or j.get("Reason") or "")
     if rd and not rd.isdigit():
-        parts.append(REASON_VI.get(rd, rd))
+        parts.append(REASON_VI.get(rd, vi(rd)))
+    for k in ("Name", "State", "EventCode"):                  # PalletIdentify, FileUnmatch, RobotLocationException ...
+        v = str(j.get(k) or "")
+        if v and v != "blank" and not v.isdigit():
+            parts.append(NAME_VI.get(v, v))
     if j.get("Direction"):
         parts.append("hướng " + DIR_VI.get(j["Direction"], str(j["Direction"])))
     if j.get("TargetShelfNo"):
         parts.append(f"kệ cần lấy {j['TargetShelfNo']}")
     if j.get("TaskID"):
         parts.append(f"task {j['TaskID']}")
+    if j.get("ChargeStationID"):
+        parts.append(f"cọc sạc {j['ChargeStationID']}")
+    if j.get("RobotStateDesc"):
+        parts.append(f"robot {vi(j['RobotStateDesc'])}")
+    rm = j.get("Remark")
+    if isinstance(rm, dict) and rm.get("desc"):
+        parts.append(str(rm["desc"]))
+    if j.get("deviceCode"):
+        parts.append(f"thiết bị {j['deviceCode']}")
     code = ""
-    r = j.get("Reason")
-    if isinstance(r, int) and r >= 1000:
-        code = str(r)
+    for k in ("errorCode", "ReasonCode", "Reason"):           # sạc lỗi: errorCode 72xx; robot: Reason >= 1000
+        v = to_int(j.get(k))
+        if v is not None and v >= 1000:
+            code = str(v)
+            break
+    if not parts and j.get("QrCode"):
+        parts.append(f"tại điểm {j['QrCode']}")
     return ("; ".join(parts) or desc), code, str(j.get("Id") or ""), (pos if isinstance(pos, list) and len(pos) == 2 else None)
+
+
+def charger_name(dev):
+    """Thiết bị là cọc sạc (khai ở "chargers" hoặc tên toàn số không phải robot) -> tên hiển thị "Cọc sạc 1082", không thì ""."""
+    ch = CFG.get("chargers")
+    if isinstance(ch, dict) and dev in ch:
+        return ch[dev] or f"Cọc sạc {dev}"
+    if isinstance(ch, list) and dev in ch:
+        return f"Cọc sạc {dev}"
+    return f"Cọc sạc {dev}" if dev.isdigit() and dev not in CFG.get("robots", []) else ""
 
 
 def handle_alarm(d):
@@ -354,32 +404,54 @@ def handle_alarm(d):
     desc, jcode, eid, apos = parse_alarm_desc(raw_desc)
     dev = str(d.get("deviceNum") or d.get("deviceName") or "")
     dev = CFG.get("alias", {}).get(dev, dev)
+    charger = charger_name(dev)
     src = str(d.get("channelDeviceId") or "")
     resolved = to_int(d.get("alarmStatus")) == 1
     m = re.search(r"\((\d{4,5})\)", raw_desc)
     code = m.group(1) if m else jcode
-    key = f"{dev}|{atype}|{eid or src}|{raw_desc[:80]}"
+    # cọc sạc chập chờn (lỗi rồi hết sau ~1 giây, lặp liên tục): gộp theo loại, không tách theo từng bản tin
+    key = f"{dev}|{atype}" if charger else f"{dev}|{atype}|{eid or src}|{raw_desc[:80]}"
     rec = ALARMS.get(key)
     near = nearest_cell(apos) if apos else None
     where = f"gần {near[0]} ({near[1]})" if near else ""
+    tname = ALARM_TYPES.get(atype, f"Loại {atype}")
+    if charger:
+        tname = {1: "Cọc sạc mất kết nối", 4: "Cọc sạc lỗi giao tiếp"}.get(atype, tname)
+    alert_alarm(dev, charger, atype, tname, code, desc, where or place(src) or src, resolved, now)
     if rec and now - rec["last"] <= float(CFG.get("alarm_dedup_sec", 300)):
         was = rec["resolved"]
         rec["last"], rec["count"] = now, rec["count"] + 1
         rec["resolved"] = resolved
-        if resolved and not was:
+        if resolved and not was and not charger:
             incident("alarm", "low", f"{rec['device']}: {rec['type_name']} đã hết", desc, rec["device"])
     else:
-        rec = {"key": key, "first": now, "last": now, "count": 1, "device": dev, "type": atype, "type_name": ALARM_TYPES.get(atype, f"Loại {atype}"),
+        rec = {"key": key, "first": now, "last": now, "count": 1, "device": charger or dev, "type": atype, "type_name": tname,
                "desc": desc, "grade": to_int(d.get("alarmGrade"), 0), "grade_name": GRADE.get(to_int(d.get("alarmGrade"), 0), "?"),
                "source": src, "place": where or place(src), "hint": str(d.get("channelName") or "").replace("\\r\\n", " ").replace("\r\n", " "),
                "err_code": code, "resolved": resolved, "area": d.get("areaId")}
         ALARMS[key] = rec
         if not resolved:                      # cảnh báo đến lần đầu đã ở trạng thái hết thì không tạo sự cố mới
-            lvl = {2: "high", 1: "mid"}.get(rec["grade"], "low")
+            lvl = "mid" if charger else {2: "high", 1: "mid"}.get(rec["grade"], "low")
             incident("alarm", lvl, f"{rec['device'] or 'Hệ thống'}: {rec['type_name']}" + (f" (mã {rec['err_code']})" if rec["err_code"] else ""),
                      (desc + (f" · Tại {where or src}" if (where or src) else "")).strip(), rec["device"])
     write_log("alarm", {"time": now_s(), **{k: rec[k] for k in ("device", "type", "type_name", "desc", "grade", "source", "err_code", "resolved", "hint")},
                         "alarmDate_raw": d.get("alarmDate"), "count": rec["count"], "pos": apos, "raw": raw_desc})
+
+
+def alert_alarm(dev, charger, atype, tname, code, desc, where, resolved, now):
+    """Cảnh báo RCS -> điều kiện Telegram. Cọc sạc gom vào B6 (hết khi im lặng), loại khác theo bảng ALARM_RULE."""
+    rid = "charger" if charger else notify.ALARM_RULE.get(atype)
+    if not rid:
+        return
+    name = charger or dev or "Hệ thống"
+    if resolved:
+        if notify.RULE[rid]["end"] == "status":
+            NOTI.clear(rid, name)
+        return
+    h = HINTS["codes"].get(code)
+    detail = " · ".join(filter(None, [desc, h and f"{h[0]}. Xử lý: {h[1]}", where and f"Tại {where}"]))
+    title = f"{name}: lỗi giao tiếp / mất kết nối" if charger else f"{name}: {tname}" + (f" (mã {code})" if code else "")
+    NOTI.raise_(rid, name, title, f"{tname}" + (f" (mã {code})" if code else "") + f" · {detail}" if charger else detail)
 
 
 def handle_task(d):
@@ -396,8 +468,11 @@ def handle_task(d):
             TASKS.pop(k, None)
     write_log("task", ev)
     if status in (5, 7):
-        incident("task", "high", f"Task {ev['status_name'].lower()}: {ev['order'] or '(không mã)'}",
-                 f"{ev['error']} · Robot {ev['device'] or '?'} · Điểm {ev['point']} {ev['point_place']}".strip(" ·"), ev["device"])
+        detail = f"{ev['error']} · Robot {ev['device'] or '?'} · Điểm {ev['point']} {ev['point_place']}".strip(" ·")
+        incident("task", "high", f"Task {ev['status_name'].lower()}: {ev['order'] or '(không mã)'}", detail, ev["device"])
+        NOTI.raise_("task_fail", ev["order"] or "?", f"Task {ev['status_name'].lower()}: {ev['order'] or '(không mã)'}", detail)
+    elif ev["order"]:
+        NOTI.clear("task_fail", ev["order"], f"task {ev['status_name'].lower()}")
 
 
 # ---------------------------------------------------------------- hỏi RCS định kỳ (getRobotTaskPath, getOrderList); topologyList chỉ gọi khi bấm nút tải map
@@ -445,6 +520,7 @@ def on_paths(data):
 def on_orders(data):
     data = data or {}
     tasks = data.get("Tasks") or []
+    boot = not ORDERS["ts"]                                # lần hỏi đầu tiên sau khi khởi động
     ORDERS.update(ts=time.time(), total=data.get("totalCount"), list=[{
         "order": str(t.get("OrderId") or ""), "task_id": t.get("TaskId"), "number": str(t.get("OrderNumber") or ""), "status": to_int(t.get("OrderStatus")),
         "status_name": ORDER_STATUS.get(to_int(t.get("OrderStatus")), str(t.get("OrderStatus"))), "template": str(t.get("TemplateCode") or ""),
@@ -457,8 +533,14 @@ def on_orders(data):
         ORDER_SEEN[o["order"]] = o["status"]
         write_log("order", {"time": now_s(), **o})
         cb = TASKS.get(o["order"])                         # callback task-status đã báo lỗi này thì không báo trùng
-        if o["status"] in (5, 7) and not first and not (cb and cb.get("status") == o["status"]):
-            incident("task", "high", f"Task {o['status_name'].lower()}: {o['order']}", f"{o['template_name'] or o['template']} · đường {o['path']} (theo getOrderList)")
+        oid = o["order"] or o["number"]
+        # chỉ bỏ qua task lỗi có sẵn ở lần hỏi đầu sau khởi động; task mới xuất hiện đã ở trạng thái lỗi vẫn phải báo
+        if o["status"] in (5, 7) and not (boot and first) and not (cb and cb.get("status") == o["status"]):
+            detail = f"{o['template_name'] or o['template']} · đường {o['path']} (theo getOrderList)"
+            incident("task", "high", f"Task {o['status_name'].lower()}: {oid}", detail)
+            NOTI.raise_("task_fail", oid, f"Task {o['status_name'].lower()}: {oid}", detail)
+        elif o["status"] not in (5, 7):
+            NOTI.clear("task_fail", oid, f"task {o['status_name'].lower()}")
     if len(ORDER_SEEN) > 5000:
         for k in list(ORDER_SEEN)[:2000]:
             ORDER_SEEN.pop(k, None)
@@ -489,13 +571,17 @@ async def rcs_poller():
             try:
                 data = await asyncio.to_thread(rcs_fetch, kind, bodies[kind])
                 handlers[kind](data)
-                st.update(ok=time.time(), count=st["count"] + 1, err="")
+                st.update(ok=time.time(), count=st["count"] + 1, err="", fails=0)
+                NOTI.clear("api_fail", API_NAMES[kind])
                 AUTH["need"] = False
                 if st["fail"]:
                     st["fail"] = False
                     incident("system", "low", f"Gọi được API RCS {API_NAMES[kind]} trở lại")
             except Exception as e:
                 st["err"] = str(e)[:300]
+                st["fails"] = st.get("fails", 0) + 1
+                if st["fails"] >= int(NOTI.rule("api_fail").get("fails", 3)):
+                    NOTI.raise_("api_fail", API_NAMES[kind], f"Không gọi được API RCS {API_NAMES[kind]}", f"{st['fails']} lần liên tiếp · {st['err']}")
                 if isinstance(e, rcs_api.RcsAuthError):
                     AUTH.update(need=True, ts=time.time(), err=st["err"])
                 if not st["fail"]:
@@ -643,7 +729,7 @@ def robots_view():
                         "payload": "", "code": "", "age": None, "lost": False, "unseen": True, "status_name": "Chưa có dữ liệu", "place": "", "path_text": "",
                         "map": None, "route": route_view(name), "preds": []})
     order = {n: i for i, n in enumerate(CFG.get("robots", []))}
-    out.sort(key=lambda x: (0 if x["status"] == 2 else 1 if (x["lost"] or x["status"] == 0) else 3 if x.get("unseen") else 2, order.get(x["name"], 99), x["name"]))
+    out.sort(key=lambda x: (0 if x["status"] == 2 else 1 if (x["lost"] or x["status"] == 0 or x.get("off")) else 3 if x.get("unseen") else 2, order.get(x["name"], 99), x["name"]))
     return out
 
 
@@ -653,7 +739,7 @@ async def api_state(request: Request):
     act = [a for a in ALARMS.values() if not a["resolved"] and now - a["last"] <= float(CFG.get("alarm_active_minutes", 10)) * 60]
     silence = now - CHAN["agv"]["last"] if CHAN["agv"]["last"] else None
     return J({"now": now_s(), "robots": rob,
-              "summary": {"total": len(rob), "unseen": sum(1 for r in rob if r.get("unseen")), "fault": sum(1 for r in rob if r["status"] == 2), "lost": sum(1 for r in rob if r["lost"] or r["status"] == 0),
+              "summary": {"total": len(rob), "unseen": sum(1 for r in rob if r.get("unseen")), "fault": sum(1 for r in rob if r["status"] == 2), "lost": sum(1 for r in rob if r["lost"] or r["status"] == 0 or r.get("off")),
                           "running": sum(1 for r in rob if r["status"] == 4 and not r["lost"]), "idle": sum(1 for r in rob if r["status"] == 1 and not r["lost"]),
                           "charging": sum(1 for r in rob if r["status"] == 5 and not r["lost"]), "active_alarms": len(act)},
               "silence_sec": int(silence) if silence is not None else None, "silence_warn": float(CFG.get("silence_warn_sec", 120)),
@@ -878,7 +964,7 @@ async def api_system(request: Request):
             p = os.path.join(LOG_DIR, name)
             if os.path.isdir(p):
                 days.append({"date": name, "files": [{"name": f, "kb": round(os.path.getsize(os.path.join(p, f)) / 1024, 1)} for f in sorted(os.listdir(p))]})
-    return J({"uptime": int(now - START), "channels": chans, "paths": CFG["paths"], "rcs_url": CFG.get("public_host", "") + ":" + str(CFG["listen"]["port_rcs"]), "web_url": CFG.get("public_host", "") + ":" + str(CFG["listen"]["port_web"]), "retention_days": CFG["retention_days"], "days": days,
+    return J({"version": VERSION, "admin_url": CFG.get("public_host", "") + ":" + str(CFG["listen"].get("port_admin", 5504)), "telegram": NOTI.ready(), "uptime": int(now - START), "channels": chans, "paths": CFG["paths"], "rcs_url": CFG.get("public_host", "") + ":" + str(CFG["listen"]["port_rcs"]), "web_url": CFG.get("public_host", "") + ":" + str(CFG["listen"]["port_web"]), "retention_days": CFG["retention_days"], "days": days,
               "log_push": CFG.get("log_push", True), "log_api": CFG.get("log_api", True), "nodes": len(BY_CODE), "now": now_s(),
               "map": {"points": len(POINTS), "built": (MAP or {}).get("built", ""), "source": (MAP or {}).get("source", "")},
               "api": {"on": API_ON, "base": API.get("base", ""), "area_id": API.get("area_id"), "user": API.get("user", ""),
@@ -889,7 +975,7 @@ async def api_system(request: Request):
 async def api_history(request: Request):
     q = request.query_params
     date, kind = q.get("date") or day(), q.get("kind") or "incident"
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) or kind not in ("alarm", "agv", "task", "incident", "raw", "path", "order", "push", "api"):
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) or kind not in ("alarm", "agv", "task", "incident", "raw", "path", "order", "push", "api", "notify"):
         return J({"error": "tham số không hợp lệ"}, 400)
     rows = read_lines(os.path.join(LOG_DIR, date, kind + ".jsonl"), 2000)
     s = (q.get("q") or "").strip().lower()
@@ -917,15 +1003,74 @@ async def map_file(request: Request):
 
 
 async def index(request: Request):
-    return FileResponse(os.path.join(HERE, "index.html"), headers={"Cache-Control": "no-store"})
+    with open(os.path.join(HERE, "index.html"), encoding="utf-8") as f:
+        page = f.read().replace("{{VERSION}}", VERSION)
+    return Response(page, media_type="text/html; charset=utf-8", headers={"Cache-Control": "no-store"})
+
+
+async def static_file(request: Request):
+    name = request.path_params["name"]
+    p = os.path.join(STATIC, name)
+    if not re.fullmatch(r"[a-z0-9_-]+\.(png|svg|ico)", name) or not os.path.exists(p):
+        return J({"error": "không có file"}, 404)
+    return FileResponse(p, headers={"Cache-Control": "public, max-age=86400"})
 
 
 # ---------------------------------------------------------------- nền: phát hiện mất tín hiệu, dọn log
+def alert_scan(now):
+    """Các lỗi suy ra từ trạng thái robot (không do RCS báo): bật/tắt điều kiện, notify.tick() lo ngưỡng thời gian và gửi tin."""
+    last = CHAN["agv"]["last"]
+    silent = bool(last) and now - last > 10                     # RCS đẩy ~3 giây/lần; ngưỡng thật nằm ở delay của luật A10/A12
+    for name, r in ROBOTS.items():
+        place_ = robot_place(r)
+        lost = now - r["ts"] > 10
+        if lost and silent:                                     # cả RCS ngừng gửi: chỉ báo A12, không báo mất tín hiệu từng robot
+            NOTI.drop_unfired("lost")
+            continue
+        if lost:
+            NOTI.raise_("lost", name, f"{name}: mất tín hiệu", f"Vị trí cuối: {place_}", since=r["ts"])
+            continue
+        NOTI.clear("lost", name)
+        st, b = r["status"], r.get("battery")
+        if r.get("off"):
+            NOTI.raise_("offline", name, f"{name}: offline", f"Vị trí cuối: {place_} · pin {b}%", since=r.get("off_ts"))
+        else:
+            NOTI.clear("offline", name)
+        if st == 2:
+            NOTI.raise_("fault", name, f"{name}: báo LỖI (Fault)", f"Vị trí: {place_} · task {r['order'] or '-'}")
+        else:
+            NOTI.clear("fault", name)
+        br = NOTI.rule("battery")
+        if b is not None and b < float(br.get("low", 20)) and st != 5 and not r.get("off"):
+            NOTI.raise_("battery", name, f"{name}: pin thấp ({b}%)", f"Vị trí: {place_}")
+        elif st == 5 or (b is not None and b >= float(br.get("ok", 25))):
+            NOTI.clear("battery", name, f"pin {b}%" + (" · đang sạc" if st == 5 else ""))
+        still = now - r.get("moved_ts", now)
+        if st == 4 and not r.get("off") and still >= 15:
+            NOTI.raise_("stuck", name, f"{name}: nghi kẹt, đứng yên khi chạy task", f"{place_} · task {r['order'] or '-'}", since=r["moved_ts"])
+        else:
+            NOTI.clear("stuck", name, "robot chạy lại" if st == 4 else f"trạng thái {ROBOT_STATUS.get(st, st)}")
+        if st == 4 or (st == 5 and r.get("state") == "InCharging"):
+            NOTI.clear("charge_fail", name, "robot đang sạc" if st == 5 else "robot nhận task rời cọc")
+        c = NOTI.get("pallet", name)
+        if c and r.get("moved_ts", 0) > c["since"] + 5:
+            NOTI.clear("pallet", name, "xe đã chạy lại")
+    if silent:
+        NOTI.raise_("rcs_silent", "RCS", "RCS ngừng gửi dữ liệu trạng thái robot", f"Lần cuối {now_s(last)}. Kiểm tra mạng/RCS.", since=last)
+    else:
+        NOTI.clear("rcs_silent", "RCS")
+    NOTI.tick()
+
+
 async def watchdog():
     last_clean = 0
     while True:
-        await asyncio.sleep(10)
+        await asyncio.sleep(5)
         now = time.time()
+        try:
+            alert_scan(now)
+        except Exception as e:                  # lỗi cảnh báo không được làm dừng giám sát
+            write_log("raw", {"time": now_s(), "kind": "alert", "error": f"{type(e).__name__}: {e}"})
         for name, r in ROBOTS.items():
             lost = now - r["ts"] > float(CFG.get("robot_stale_sec", 60))
             if lost and not r.get("lost"):
@@ -967,8 +1112,10 @@ def restore_today():
 async def lifespan(app):
     cleanup_logs()
     restore_today()
-    incident("system", "low", "G8 Monitor khởi động", f"Đang chờ dữ liệu từ RCS tại {', '.join(CFG['paths'].values())}")
-    tasks = [asyncio.create_task(watchdog())]
+    before = INCIDENTS[-1]["time"] if INCIDENTS else ""
+    incident("system", "low", f"G8 Monitor {VERSION} khởi động", f"Đang chờ dữ liệu từ RCS tại {', '.join(CFG['paths'].values())}")
+    tasks = [asyncio.create_task(watchdog()), asyncio.create_task(NOTI.worker())]
+    NOTI.once("startup", f"G8 Monitor {VERSION} khởi động", f"Bản ghi cuối trước khi khởi động: {before}" if before else "Hôm nay chưa có bản ghi nào trước đó")
     if API_ON:
         tasks.append(asyncio.create_task(rcs_poller()))
         incident("system", "low", "Bật hỏi RCS định kỳ", f"{API['base']} · area {API.get('area_id')} · " + ", ".join(f"{k} mỗi {int(v)} giây" for k, v in API_EVERY.items() if v > 0))
@@ -979,7 +1126,7 @@ async def lifespan(app):
 
 rcs_routes = []
 routes = [Route("/", index), Route("/api/state", api_state), Route("/api/incidents", api_incidents), Route("/api/tasks", api_tasks),
-          Route("/api/system", api_system), Route("/api/map", api_map), Route("/map/map.png", map_file), Route("/api/history", api_history), Route("/logs/{date}/{file}", download),
+          Route("/api/system", api_system), Route("/api/map", api_map), Route("/map/map.png", map_file), Route("/static/{name}", static_file), Route("/api/history", api_history), Route("/logs/{date}/{file}", download),
           Route("/api/rcs-auth", api_rcs_auth, methods=["POST"]), Route("/api/map-job", api_map_job, methods=["GET", "POST"]), Route("/api/map-file", api_map_file),
           Route("/api/map-update", api_map_update, methods=["POST"]), Route("/api/highbay", api_highbay, methods=["POST"])]
 def make_receiver(kind):
@@ -998,11 +1145,14 @@ async def rcs_ok(request: Request):
 
 
 rcs_app = Starlette(routes=[Route("/", rcs_ok)] + rcs_routes)       # cổng RCS: chỉ nhận 3 đường dẫn RCS đẩy lên
+admin_app = admin.make_app(NOTI, VERSION, STATIC, lambda: {"robots": sorted(ROBOTS), "web_url": CFG.get("public_host", "") + ":" + str(CFG["listen"]["port_web"])})
+
 
 async def serve_all():
     host = CFG["listen"]["host"]
     servers = [uvicorn.Server(uvicorn.Config(rcs_app, host=host, port=int(CFG["listen"]["port_rcs"]), log_level="warning")),
-               uvicorn.Server(uvicorn.Config(app, host=host, port=int(CFG["listen"]["port_web"]), log_level="warning"))]
+               uvicorn.Server(uvicorn.Config(app, host=host, port=int(CFG["listen"]["port_web"]), log_level="warning")),
+               uvicorn.Server(uvicorn.Config(admin_app, host=host, port=int(CFG["listen"].get("port_admin", 5504)), log_level="warning"))]
     await asyncio.gather(*[sv.serve() for sv in servers])
 
 

@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<title>G8 Monitor - Quản trị</title>
+<link rel="icon" href="/static/icon.png">
+<style>
+:root{--g:#d7191f;--g-dk:#b01419;--g-lt:#fdecec;--ink:#4a4b4e;--bg:#f4f4f5;--card:#fff;--line:#e3e3e6;--tx:#232427;--mut:#6d6e72;--red:#c2261c;--ok:#157f3b;--amb:#b45309}
+*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding-bottom:24px}
+header{background:#fff;padding:8px 16px;position:sticky;top:0;z-index:5;border-bottom:3px solid var(--g);box-shadow:0 1px 6px rgba(0,0,0,.06);display:flex;align-items:center;gap:12px}
+header img{height:40px;width:auto;display:block}
+header .t{font-weight:800;font-size:18px;color:var(--ink);white-space:nowrap}header small{font-size:11px;color:var(--mut);font-weight:600}
+header .sp{margin-left:auto}
+main{max-width:980px;margin:0 auto;padding:12px 16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+h2{font-size:17px;margin:0 0 10px;display:flex;align-items:center;gap:8px}
+.mut{color:var(--mut);font-size:13px}
+label{display:block;font-size:14px;color:var(--mut);margin:8px 0 2px}
+input,select{font:inherit;font-size:16px;padding:9px 10px;border:1px solid #c5ccd3;border-radius:10px;background:#fff;min-height:44px;width:100%}
+input[type=checkbox]{width:22px;height:22px;min-height:0;accent-color:var(--g);margin:0;vertical-align:middle}
+.g2{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0 12px}
+.chk{display:flex;align-items:center;gap:10px;margin:10px 0;color:var(--tx);font-size:15px;cursor:pointer}
+button{font:inherit;font-size:15px;padding:9px 14px;border:1px solid var(--g);background:#fff;color:var(--g);border-radius:10px;min-height:44px;font-weight:600;cursor:pointer}
+button.pri{background:var(--g);color:#fff}button:hover:not(:disabled){border-color:var(--g-dk)}button.pri:hover:not(:disabled){background:var(--g-dk)}
+button:disabled{opacity:.5}
+.acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.pill{font-size:12px;font-weight:700;padding:3px 10px;border-radius:99px;background:#eeeef0;color:var(--ink)}
+.pill.ok{background:#e7f6ec;color:var(--ok)}.pill.bad{background:#fee2e2;color:var(--red)}
+.tw{overflow-x:auto;border:1px solid var(--line);border-radius:10px}
+table{width:100%;border-collapse:collapse;font-size:14px;min-width:760px}
+td,th{padding:7px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{font-size:12px;color:var(--mut);font-weight:700;background:#fafafa}
+tr.off td:not(:first-child){opacity:.5}
+td input[type=number]{width:96px;min-height:38px;padding:6px 8px;font-size:15px}
+td .u{font-size:12px;color:var(--mut)}
+.code{font-weight:800;color:var(--g)}
+.grp td{background:var(--g-lt);font-weight:700;color:var(--g-dk)}
+.msg{font-size:14px;margin-top:8px;min-height:20px}.msg.err{color:var(--red)}.msg.ok{color:var(--ok)}
+.item{border-left:5px solid #94a3b8;background:#f8fafc;border-radius:8px;padding:7px 10px;margin-top:6px;font-size:14px;word-break:break-word}
+.item.f{border-color:var(--red);background:#fef2f2}.item b{display:block}
+pre{margin:0;white-space:pre-wrap;word-break:break-word;font:13px/1.4 ui-monospace,Consolas,monospace}
+#login{max-width:380px;margin:40px auto}
+.chatlist button{display:block;width:100%;text-align:left;margin-top:6px}
+</style>
+</head>
+<body>
+<header><img src="/static/logo.png" alt="G8 HOME"><span class="t">Monitor · Quản trị <small>v{{VERSION}}</small></span><span class="sp"></span><button id="out" hidden>Đăng xuất</button></header>
+<main>
+<section class="card" id="login" hidden>
+  <h2>Đăng nhập quản trị</h2>
+  <label for="pw">Mật khẩu</label><input id="pw" type="password" autocomplete="current-password">
+  <div class="acts"><button class="pri" id="go">Đăng nhập</button></div><div class="msg err" id="lmsg"></div>
+</section>
+
+<div id="app" hidden>
+<section class="card">
+  <h2>Telegram <span class="pill" id="ready"></span></h2>
+  <label class="chk"><input type="checkbox" id="enabled"> Bật gửi cảnh báo qua Telegram</label>
+  <div class="g2">
+    <div><label for="token">Token bot (lấy từ @BotFather)</label><input id="token" type="password" autocomplete="off" placeholder=""></div>
+    <div><label for="chat">Chat ID nhóm (số âm, vd -1001234567890)</label><input id="chat" autocomplete="off"></div>
+    <div><label for="prefix">Tiền tố tin nhắn</label><input id="prefix" maxlength="20" placeholder="G8"></div>
+    <div><label for="remind">Nhắc 1 lần khi lỗi chưa hết sau (phút, 0 = không nhắc)</label><input id="remind" type="number" min="0" max="1440"></div>
+    <div><label for="stale">Tự đóng cảnh báo RCS không báo hết sau (phút)</label><input id="stale" type="number" min="5" max="1440"></div>
+  </div>
+  <label class="chk"><input type="checkbox" id="sendEnd"> Gửi tin ✅ khi lỗi kết thúc (trả lời vào tin bắt đầu)</label>
+  <div class="mut">Token đang lưu: <span id="tokMask">—</span>. Để trống ô token thì giữ token cũ.</div>
+  <div class="acts"><button class="pri" id="save1">Lưu</button><button id="test">Gửi tin thử</button><button id="find">Tìm chat ID</button><button id="clrTok">Xoá token</button></div>
+  <div class="msg" id="m1"></div><div class="chatlist" id="chats"></div>
+</section>
+
+<section class="card">
+  <h2>Giờ nghỉ (không báo robot offline)</h2>
+  <div class="g2">
+    <div><label for="ns">Từ</label><input id="ns" type="time"></div>
+    <div><label for="ne">Đến</label><input id="ne" type="time"></div>
+  </div>
+  <div class="mut">Áp dụng cho các lỗi đánh dấu cột "Giờ nghỉ" bên dưới (mặc định chỉ A8 Robot offline). Robot vẫn offline khi hết giờ nghỉ thì đếm ngưỡng từ lúc hết giờ nghỉ. Hai mốc bằng nhau = không có giờ nghỉ.</div>
+</section>
+
+<section class="card">
+  <h2>Các lỗi đẩy lên Telegram</h2>
+  <div class="mut">Ngưỡng = lỗi phải kéo dài bao lâu mới gửi tin (0 = gửi ngay). Lỗi hết trước ngưỡng thì không gửi gì. "Hết sau" = lỗi không lặp lại trong khoảng này thì coi là đã hết (dùng cho lỗi RCS không gửi tin hết).</div>
+  <div class="tw" style="margin-top:10px"><table><thead><tr><th>Bật</th><th>Lỗi</th><th>Bắt đầu / Kết thúc</th><th>Ngưỡng</th><th>Tham số</th><th>Giờ nghỉ</th></tr></thead><tbody id="rules"></tbody></table></div>
+  <div class="acts"><button class="pri" id="save2">Lưu</button></div><div class="msg" id="m2"></div>
+</section>
+
+<section class="card">
+  <h2>Đang theo dõi</h2>
+  <div class="mut" id="stat"></div><div id="open"></div>
+</section>
+
+<section class="card">
+  <h2>Tin nhắn gần đây</h2>
+  <div id="recent"></div>
+</section>
+</div>
+</main>
+<script>
+const $=q=>document.querySelector(q);
+const el=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e};
+const dur=s=>s<60?s+" giây":s<3600?Math.floor(s/60)+" phút":Math.floor(s/3600)+" giờ "+Math.floor(s%3600/60)+" phút";
+const PL={quiet:["Hết sau","giây"],low:["Pin thấp","%"],ok:["Pin đủ","%"],fails:["Số lần lỗi","lần"]};
+let S=null;
+async function api(url,body){const r=await fetch(url,body===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).catch(()=>null);
+  if(!r)return{error:"Mất kết nối tới G8 Monitor"};const d=await r.json().catch(()=>({error:"Lỗi "+r.status}));if(d.login)show(false);return d}
+function show(on){$("#login").hidden=on;$("#app").hidden=!on;$("#out").hidden=!on;if(!on)$("#pw").focus()}
+function msg(q,t,ok){const m=$(q);m.textContent=t||"";m.className="msg "+(ok?"ok":"err")}
+async function load(){const d=await api("/api/settings");if(d.error){if(!d.login)msg("#lmsg",d.error);return}show(true);S=d;fill();status()}
+function fill(){const t=S.telegram;$("#enabled").checked=t.enabled;$("#token").value="";$("#token").placeholder=t.token_set?"(giữ token đã lưu)":"123456789:ABC…";
+  $("#tokMask").textContent=t.token||"chưa có";$("#chat").value=t.chat_id;$("#prefix").value=t.prefix;$("#remind").value=t.remind_min;$("#stale").value=t.stale_min;
+  $("#sendEnd").checked=t.send_end;$("#ns").value=t.night_start;$("#ne").value=t.night_end;
+  const B=$("#rules");B.replaceChildren();let g="";
+  S.rules.forEach(r=>{const gr=r.code[0];if(gr!==g){g=gr;const tr=el("tr","grp"),td=el("td",null,gr==="A"?"Nhóm A · gửi ngay khi đủ ngưỡng":"Nhóm B · chỉ gửi khi lỗi kéo dài");td.colSpan=6;tr.append(td);B.append(tr)}
+    const tr=el("tr",r.on?"":"off");tr.dataset.id=r.id;
+    const c0=el("td"),cb=el("input");cb.type="checkbox";cb.checked=r.on;cb.className="on";cb.onchange=()=>tr.className=cb.checked?"":"off";c0.append(cb);
+    const c1=el("td");c1.append(el("span","code",r.code+" "),el("b",null,r.name));
+    const c2=el("td");c2.append(el("div",null,"▶ "+r.start),el("div","mut","■ "+r.stop));
+    const c3=el("td");if(r.end==="once")c3.append(el("span","u","—"));else{const i=el("input");i.type="number";i.min=0;i.value=r.delay;i.className="delay";c3.append(i,el("div","u","giây"+(r.delay>=60?" ("+dur(r.delay)+")":"")))}
+    const c4=el("td");Object.keys(PL).forEach(k=>{if(r[k]==null)return;const w=el("div");w.append(el("span","u",PL[k][0]+" "));const i=el("input");i.type="number";i.min=0;i.value=r[k];i.className="p-"+k;w.append(i,el("span","u"," "+PL[k][1]));c4.append(w)});
+    const c5=el("td"),nb=el("input");nb.type="checkbox";nb.checked=r.night;nb.className="night";if(r.end==="once")nb.disabled=true;c5.append(nb);
+    tr.append(c0,c1,c2,c3,c4,c5);B.append(tr)})}
+function status(){const t=S.stat;$("#ready").textContent=S.ready?"đang gửi":"chưa gửi";$("#ready").className="pill "+(S.ready?"ok":"bad");
+  $("#stat").textContent="Đã gửi "+t.sent+" tin · lỗi "+t.fail+" · đang chờ gửi "+S.queue+(t.last_err?" · lỗi gần nhất: "+t.last_err:"")+(S.ready?"":" · Telegram đang tắt hoặc thiếu token/chat ID, chỉ theo dõi không gửi");
+  const O=$("#open");O.replaceChildren();if(!S.open.length)O.append(el("div","mut","Không có lỗi nào đang mở."));
+  S.open.forEach(c=>{const d=el("div","item"+(c.fired?" f":""));d.append(el("b",null,c.code+" · "+c.title),el("div",null,(c.detail||"")),el("div","mut","Đã "+dur(c.age)+" · "+(c.fired?"đã gửi tin bắt đầu":"chưa đủ ngưỡng / đang tắt / giờ nghỉ")));O.append(d)});
+  const R=$("#recent");R.replaceChildren();if(!S.recent.length)R.append(el("div","mut","Chưa có tin nào kể từ lúc khởi động."));
+  S.recent.forEach(m=>{const d=el("div","item"+(m.result==="đã gửi"?"":" f"));const p=el("pre");p.textContent=m.text.replace(/<[^>]+>/g,"");d.append(el("div","mut",m.time+" · "+m.kind+" · "+m.result),p);R.append(d)})}
+function collect(){const rules={};document.querySelectorAll("#rules tr[data-id]").forEach(tr=>{const x={on:tr.querySelector(".on").checked,night:tr.querySelector(".night").checked};
+    const dl=tr.querySelector(".delay");if(dl)x.delay=dl.value;Object.keys(PL).forEach(k=>{const i=tr.querySelector(".p-"+k);if(i)x[k]=i.value});rules[tr.dataset.id]=x});
+  return{telegram:{enabled:$("#enabled").checked,token:$("#token").value.trim(),chat_id:$("#chat").value.trim(),prefix:$("#prefix").value.trim(),remind_min:$("#remind").value,
+    stale_min:$("#stale").value,send_end:$("#sendEnd").checked,night_start:$("#ns").value,night_end:$("#ne").value},rules}}
+async function save(q,extra){const d=await api("/api/settings",{...collect(),...extra});if(d.error){msg(q,d.error);return false}S=d;fill();status();msg(q,"✔ Đã lưu, áp dụng ngay",true);return true}
+$("#save1").onclick=()=>save("#m1");$("#save2").onclick=()=>save("#m2");
+$("#clrTok").onclick=()=>{if(confirm("Xoá token bot đã lưu?"))save("#m1",{telegram:{...collect().telegram,clear_token:true}})};
+$("#test").onclick=async()=>{if(!await save("#m1"))return;msg("#m1","Đang gửi…",true);const d=await api("/api/test",{});msg("#m1",d.error||"✔ Đã gửi tin thử, kiểm tra nhóm Telegram",!d.error)};
+$("#find").onclick=async()=>{if($("#token").value.trim()&&!await save("#m1"))return;msg("#m1","Đang hỏi Telegram…",true);const d=await api("/api/chats",{});const C=$("#chats");C.replaceChildren();
+  if(d.error){msg("#m1",d.error);return}
+  if(!d.chats.length){msg("#m1","Chưa thấy nhóm nào. Thêm bot vào nhóm, nhắn một tin trong nhóm (vd /start@tên_bot) rồi bấm lại.");return}
+  msg("#m1","Chọn nhóm để điền chat ID:",true);d.chats.forEach(c=>{const b=el("button",null,(c.title||"(không tên)")+" · "+c.type+" · "+c.id);b.onclick=()=>{$("#chat").value=c.id;C.replaceChildren();msg("#m1","Đã điền chat ID, bấm Lưu",true)};C.append(b)})};
+$("#go").onclick=async()=>{const d=await api("/api/login",{password:$("#pw").value});if(d.error){msg("#lmsg",d.error);return}$("#pw").value="";msg("#lmsg","");load()};
+$("#pw").onkeydown=e=>{if(e.key==="Enter")$("#go").click()};
+$("#out").onclick=async()=>{await api("/api/logout",{});show(false)};
+setInterval(async()=>{if($("#app").hidden||document.hidden)return;const d=await api("/api/settings");if(!d.error){S.open=d.open;S.recent=d.recent;S.stat=d.stat;S.queue=d.queue;S.ready=d.ready;status()}},10000);
+load();
+</script>
+</body>
+</html>

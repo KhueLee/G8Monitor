@@ -1,6 +1,6 @@
-# G8 Monitor – theo dõi robot và giám sát lỗi (giai đoạn 1: thu thập dữ liệu RCS)
+# G8 Monitor – theo dõi robot và giám sát lỗi (v1.1.0: thu thập dữ liệu RCS + cảnh báo Telegram)
 
-RCS/ICS **tự đẩy** dữ liệu lên tool này (trạng thái robot, cảnh báo, task). Tool còn **tự hỏi RCS** (máy RCS `192.168.110.100`, area 2, mặc định bật) đường đi robot và danh sách task. Trên web có nút **cập nhật bản đồ từ RCS** và **cập nhật bảng highbay từ file Excel**. Tool lưu log theo ngày và hiển thị trên web tiếng Việt (dùng được trên điện thoại).
+RCS/ICS **tự đẩy** dữ liệu lên tool này (trạng thái robot, cảnh báo, task). Tool còn **tự hỏi RCS** (máy RCS `192.168.110.100`, area 2, mặc định bật) đường đi robot và danh sách task. Trên web có nút **cập nhật bản đồ từ RCS** và **cập nhật bảng highbay từ file Excel**. Tool lưu log theo ngày và hiển thị trên web tiếng Việt (dùng được trên điện thoại). Lỗi quan trọng được **đẩy vào nhóm Telegram**, cấu hình trên **trang quản trị cổng 5504**.
 
 ## Cài Git và tải tool về máy client (PC chạy tool)
 1. **Cài Git**: tải Git for Windows tại https://git-scm.com/download/win (bản 64-bit), chạy file cài, để mặc định và bấm Next đến hết. Ở bước "Adjusting your PATH environment" giữ lựa chọn **Git from the command line and also from 3rd-party software**.
@@ -25,8 +25,8 @@ RCS/ICS **tự đẩy** dữ liệu lên tool này (trạng thái robot, cảnh 
 
 ## Cài và chạy
 1. `pip install -r requirements.txt` (chạy tool chỉ cần `starlette uvicorn`; `pillow numpy openpyxl` dùng cho công cụ cập nhật bản đồ/tên điểm)
-2. Chạy `start.bat`. **Xem giao diện: `http://192.168.110.189:5503`** (cổng web). **RCS đẩy dữ liệu vào cổng 5502** (cổng nhận, tách riêng khỏi web).
-3. Chạy `tools\firewall_open.bat` bằng **Run as administrator** một lần (mở cả 5502 và 5503).
+2. Chạy `start.bat`. **Xem giao diện: `http://192.168.110.189:5503`** (cổng web). **RCS đẩy dữ liệu vào cổng 5502** (cổng nhận, tách riêng khỏi web). **Trang quản trị Telegram: `http://192.168.110.189:5504`** (cần mật khẩu).
+3. Chạy `tools\firewall_open.bat` bằng **Run as administrator** một lần (mở 5502, 5503 và 5504). Máy đã chạy bản cũ thì chạy lại để mở thêm 5504.
 4. PC chạy tool phải có IP cố định 192.168.110.189.
 
 ## Khai trong RCS
@@ -121,7 +121,7 @@ Mạng nội bộ RCS thường tắt xác thực nên để trống. Nếu RCS 
 Password lưu dạng chữ thường trong `config.json` (không đưa lên git); trang web chỉ dùng trong LAN, ai mở được web cũng đổi được user/password này.
 
 ## Giao diện
-Màu giao diện theo logo VietGlory (đỏ, xám); đường đi dự kiến của robot màu cam theo logo G8. Chọn giao diện bằng **nút sổ xuống** trên thanh trên cùng, cạnh chữ G8 Monitor (hiện tên giao diện đang xem, ví dụ "Bản đồ ▼"); chấm đỏ trên nút là số lỗi/cảnh báo đang có. Trình duyệt nhớ giao diện xem lần cuối. Thêm giao diện mới: thêm một `<button data-t="...">` trong `#menu` và một `<section class="tab">` trong `src\index.html`.
+Thanh trên cùng dùng logo G8 HOME thật (`src\static\logo.png`, icon tab `icon.png`) và hiện số phiên bản. Màu giao diện theo logo VietGlory (đỏ, xám); đường đi dự kiến của robot màu cam theo logo G8. Chọn giao diện bằng **nút sổ xuống** trên thanh trên cùng, cạnh chữ G8 Monitor (hiện tên giao diện đang xem, ví dụ "Bản đồ ▼"); chấm đỏ trên nút là số lỗi/cảnh báo đang có. Trình duyệt nhớ giao diện xem lần cuối. Thêm giao diện mới: thêm một `<button data-t="...">` trong `#menu` và một `<section class="tab">` trong `src\index.html`.
 - **Bản đồ** (mặc định): ảnh bản đồ nhà máy (dựng từ map RCS), kéo để di chuyển, hai ngón/cuộn chuột để zoom, nút + − ⤢ (⤢ = vừa khung). Chỉ là ảnh, không tương tác node/edge. Robot là chấm tròn có tên, **màu theo trạng thái** (xanh lá: đang chạy, xanh dương: rảnh, tím: sạc, đỏ nhấp nháy: lỗi, xám: mất tín hiệu/offline; viền cam hoặc dấu ! khi có cảnh báo). Vị trí cập nhật mỗi 3 giây, không chạy mượt.
   Chạm robot (hoặc bấm tên robot ở hàng trên) → **thanh thông báo** hiện trạng thái, vị trí (tên ô), task và **lỗi dự đoán**; thanh đỏ trên cùng liệt kê robot đang có lỗi nặng.
   Vị trí robot hiển thị theo **ô highbay gần nhất** (dạng `D36-16`, ví dụ "Gần D36-16 (Kho 2500)"); trên bản đồ vẫn đặt theo toạ độ.
@@ -135,7 +135,7 @@ Robot theo dõi: LT01–LT05, FK02 (khai ở `robots` trong config.json; robot c
 
 ## Lỗi dự đoán (thanh thông báo trên bản đồ)
 Suy ra từ dữ liệu RCS gửi, kèm cách xử lý bằng tiếng Việt (bảng mã lỗi trong `data\hints.json`, có thể sửa):
-cảnh báo RCS đang xảy ra (mã 8039, 8024, 25216...) · robot Fault chưa có chi tiết · mất tín hiệu/offline · pin thấp · **nghi kẹt** (đang chạy task nhưng đứng yên quá `stuck_sec`, mặc định 180 giây) · sạc nhưng pin không tăng `charge_stall_min` phút · task vừa gửi lỗi/chạy lỗi. Đây là **dự đoán**, không phải kết luận.
+cảnh báo RCS đang xảy ra (mã 8039, 8024, 25216...) · robot Fault chưa có chi tiết · mất tín hiệu/offline · pin thấp · **nghi kẹt** (đang chạy task nhưng đứng yên quá `stuck_sec`, mặc định 300 giây, **tính từ lúc nhận task**, không cộng thời gian rảnh/offline trước đó) · sạc nhưng pin không tăng `charge_stall_min` phút · task vừa gửi lỗi/chạy lỗi. Đây là **dự đoán**, không phải kết luận.
 
 ## Cập nhật bản đồ bằng dòng lệnh (`tools\update_map.py`)
 Cách dễ nhất là nút trên web (xem trên). Trên máy chạy tool cũng làm được bằng dòng lệnh, cần `pip install pillow numpy`:
@@ -156,6 +156,52 @@ Cách dễ nhất là nút trên web (xem trên, nhận cả file vị trí xu�
 
 ## Tự phát hiện sự cố (ghi vào log sự cố)
 Robot báo Fault / hết lỗi · offline / online lại · pin dưới `battery_low` · mất tín hiệu quá `robot_stale_sec` · RCS ngừng gửi dữ liệu · task gửi lỗi (5) / chạy lỗi (7) · mọi cảnh báo RCS (mức theo `alarmGrade`).
+- **Offline** xét theo `state = "Offline"` (RCS thật gửi offline kèm `deviceStatus` 1 hoặc 5, hiếm khi 0). Offline trong giờ nghỉ (xem Telegram) ghi mức thấp, kèm chữ "giờ nghỉ".
+- **Cọc sạc**: thiết bị khai trong `chargers` (1080–1083) hoặc tên toàn số không phải robot được hiện là "Cọc sạc 1082", gộp các cảnh báo chập chờn, không ghi "đã hết" mỗi giây, mức vừa.
+- **Task lỗi** theo getOrderList: chỉ bỏ qua task lỗi có sẵn ở lần hỏi đầu sau khi khởi động; task mới xuất hiện đã ở trạng thái lỗi vẫn báo.
+- **Cảnh báo sạc** tách mã lỗi `errorCode` (7203, 7209, 7214...), cọc sạc, trạng thái robot. Chữ Trung RCS gửi kèm (空闲, 离线, 负载异常...) được dịch sang tiếng Việt.
+
+## Cảnh báo Telegram (trang quản trị cổng 5504)
+Mở `http://192.168.110.189:5504`, đăng nhập bằng mật khẩu **`G8@Admin2026`** (đặt cố định trong `src\admin.py`, biến `ADMIN_PASSWORD`; đổi ở đó rồi khởi động lại tool). Sai 5 lần thì khóa IP đó 5 phút. Phiên đăng nhập giữ 12 giờ, khởi động lại tool thì phải đăng nhập lại.
+
+**Cài bot lần đầu:**
+1. Trên Telegram nhắn **@BotFather** → `/newbot` → đặt tên → nhận **token** dạng `123456789:ABC...`.
+2. Thêm bot vào **nhóm chung**, nhắn một tin trong nhóm (vd `/start@ten_bot`).
+3. Trang quản trị: dán token → **Lưu** → **Tìm chat ID** → chọn nhóm (chat ID nhóm là số âm) → tick **Bật gửi cảnh báo** → **Lưu** → **Gửi tin thử**.
+4. PC chạy tool phải ra được Internet tới `api.telegram.org` (cổng 443).
+
+Cài đặt lưu vào `config.json` của máy (mục `telegram`, `alerts`), áp dụng ngay, không cần khởi động lại. Token không hiện lại đầy đủ trên trang; để trống ô token khi lưu là giữ token cũ.
+
+**Cách gửi:** mỗi lỗi (theo loại lỗi + robot/thiết bị) gửi tin **🔴/🟠 bắt đầu** khi đã kéo dài đủ **ngưỡng**; hết thì gửi **✅ kết thúc** (trả lời vào tin bắt đầu, kèm thời gian kéo dài). Lỗi hết trước ngưỡng thì không gửi gì. Chưa hết sau `Nhắc` phút (mặc định 30) thì nhắc **một lần**. Cảnh báo RCS mà RCS không bao giờ báo hết thì tự đóng sau `Tự đóng` phút (mặc định 120). Tin gửi tuần tự 1 tin/giây, lỗi mạng hoặc Telegram giới hạn thì tự thử lại.
+
+**Giờ nghỉ** (mặc định 00:00–07:00, sửa trên trang): không báo robot offline (A8), không nhắc lại. Robot vẫn offline khi hết giờ nghỉ thì đếm ngưỡng từ lúc hết giờ nghỉ. Cột "Giờ nghỉ" trên trang cho bật giờ nghỉ cho lỗi khác. Lưu ý: theo log 13–18/10 robot thường offline từ ~21:30, nên với 00:00–07:00 mỗi tối sẽ có tin offline lúc ~21:30 (và 1 tin nhắc lúc ~22:00).
+
+| Mã | Lỗi | Bắt đầu | Kết thúc | Ngưỡng mặc định |
+|---|---|---|---|---|
+| A1 | Va chạm | Cảnh báo RCS loại 28 | RCS báo hết (`alarmStatus=1`) | 0 |
+| A2 | Nhận diện pallet lỗi (FK02) | Cảnh báo loại 50 (25216, 25222...) | Xe đi được > 0,5 m, hoặc 10 phút không lặp lại | 0 |
+| A3 | Lỗi dẫn đường | Cảnh báo loại 8 | RCS báo hết | 0 |
+| A4 | Thiết bị hỏng | Cảnh báo loại 2 | RCS báo hết | 0 |
+| A5 | Cập nhật bản đồ lỗi | Cảnh báo loại 11 | 10 phút không lặp lại | 0 |
+| A6 | Sạc lỗi | Cảnh báo loại 21 (mã 72xx) | RCS báo hết, robot vào sạc được, hoặc nhận task rời cọc | 60 giây |
+| A7 | Task gửi lỗi / chạy lỗi | Task trạng thái 5 / 7 | Task chuyển trạng thái khác | 0 |
+| A8 | Robot offline | `state = Offline`, ngoài giờ nghỉ | Online lại | 60 giây |
+| A9 | Robot báo LỖI | `deviceStatus = 2` | Khác 2 | 0 |
+| A10 | Mất tín hiệu robot | Không có dữ liệu robot | Có dữ liệu lại | 60 giây |
+| A11 | Pin thấp | Pin < 20% và không sạc | Vào sạc hoặc pin ≥ 25% | 0 |
+| A12 | RCS ngừng gửi dữ liệu | Không có bản tin trạng thái robot (khi đó không báo A10 từng robot) | Bản tin đến lại | 120 giây |
+| A13 | Không gọi được API RCS | 3 lần gọi lỗi liên tiếp | Gọi được lại | 0 |
+| A14 | Monitor khởi động lại | Mỗi lần tool khởi động (kèm giờ bản ghi cuối trước đó) | — | — |
+| B1 | Nghi kẹt | Đang chạy task, di chuyển < 0,5 m (tính từ lúc nhận task) | Đi được > 0,5 m hoặc hết chạy task | 300 giây |
+| B2 | Đường đi bất thường | Cảnh báo loại 23 | RCS báo hết | 60 giây |
+| B3 | Kệ bất thường | Cảnh báo loại 22 | RCS báo hết | 60 giây |
+| B4 | Có vật cản | Cảnh báo loại 12 | RCS báo hết | 180 giây |
+| B5 | Tải bất thường | Cảnh báo loại 25 | RCS báo hết | 60 giây |
+| B6 | Cọc sạc mất giao tiếp | Cọc sạc báo lỗi lặp lại liên tục | 5 phút không có lỗi mới | 300 giây |
+
+Trên trang: bật/tắt từng lỗi, sửa ngưỡng và tham số (pin thấp/pin đủ, số lần lỗi API, "hết sau"), xem các lỗi **đang theo dõi** (đã gửi hay chưa đủ ngưỡng) và **tin nhắn gần đây**. Mọi tin (kể cả không gửi được) ghi vào `logs\YYYY-MM-DD\notify.jsonl`, xem ở tab Hệ thống → log "Tin nhắn Telegram".
+Giới hạn: trạng thái lỗi đang mở nằm trong bộ nhớ; khởi động lại tool thì lỗi đang mở không gửi tin kết thúc (tin A14 báo việc khởi động lại). Tool đang chết thì không tự báo được: thấy thiếu tin A14 sau sự cố mất điện/tắt máy thì kiểm tra máy chạy tool.
+Phát lại log thật 17/10 20:56 → 18/10 16:50 (~20 giờ) với cài đặt mặc định: 65 tin (32 bắt đầu, 27 kết thúc, 6 nhắc).
 
 ## Log theo ngày
 `logs\YYYY-MM-DD\`, mỗi dòng là một JSON, mở bằng Notepad/Excel được, xem/tìm ở tab Hệ thống. Giữ `retention_days` ngày (30), tự xóa cũ.
@@ -178,10 +224,15 @@ Cấu hình riêng của máy, không đưa lên git (tự tạo từ `config.ex
 - `rcs_api`: tool hỏi RCS định kỳ (xem phần trên). `map_model`: loại xe dùng khi cập nhật bản đồ.
 - `route_jump_mm` (3000): khi vẽ đường đi, đoạn nối hai điểm dài hơn số này (mm) và nằm chéo thì bỏ không vẽ.
 - `log_push`, `log_api`: lưu nguyên bản tin RCS đẩy lên / phản hồi API RCS (xem phần Log).
+- `listen.port_admin` (5504): cổng trang quản trị. `chargers`: mã thiết bị cọc sạc → tên hiển thị.
+- `stuck_sec`: mẫu đổi 180 → 300 giây. Máy cũ có sẵn `"stuck_sec": 180` trong `config.json` thì sửa tay thành 300 (chỉ ảnh hưởng log sự cố trên web; Telegram dùng ngưỡng B1 trên trang quản trị).
+- `telegram`, `alerts`: do trang quản trị ghi, không cần sửa tay.
 
 ## Lưu ý
 - Tài liệu V3.0.6 không có trường "đã xử lý" của cảnh báo, nên tool dựa vào thời gian (`alarm_active_minutes`) và trạng thái robot.
-- Giai đoạn này chỉ trong LAN, chưa có đăng nhập. Truy cập từ xa (VPN/Tailscale) và thông báo Telegram để giai đoạn sau.
+- Chỉ dùng trong LAN. Web 5503 không có đăng nhập; trang quản trị 5504 có mật khẩu. Truy cập từ xa (VPN/Tailscale) để giai đoạn sau.
+- `alarmGrade` RCS gửi 1/2/3, tool đang hiểu 2 = cao, 1 = vừa, còn lại thấp (ví dụ Va chạm mức 3 hiện mức thấp trên web). Chưa đối chiếu được với tài liệu; Telegram không phụ thuộc mức này.
+- Ý nghĩa mã sạc lỗi 7203/7205/7207/7209/7214 chưa có trong `data\hints.json`, tin chỉ hiện mã.
 - Ngoài nhận dữ liệu RCS đẩy lên, tool chỉ gọi API đọc (xem **Các API tool gọi lên RCS**), không gửi lệnh nên không ảnh hưởng vận hành.
 
 ## Cấu trúc thư mục
@@ -190,9 +241,14 @@ Cấu hình riêng của máy, không đưa lên git (tự tạo từ `config.ex
 | `start.bat` | Chạy tool (bấm đúp) |
 | `config.example.json` | Cấu hình mẫu (đưa lên git) |
 | `config.json` | Cấu hình của máy (alias robot, rcs_api, ngưỡng cảnh báo...), tự tạo từ mẫu, không đưa lên git |
-| `src` | Tool chính: `main.py` (nhận dữ liệu, hỏi RCS, web), `rcs_api.py` (gọi API RCS, xác thực WSSE), `cfg.py` (nạp config mẫu + config máy, lưu user/password RCS), `index.html` (giao diện) |
+| `src` | Tool chính: `main.py` (nhận dữ liệu, hỏi RCS, web), `notify.py` (luật cảnh báo + gửi Telegram), `admin.py` + `admin.html` (trang quản trị 5504), `version.py` (số phiên bản), `rcs_api.py` (gọi API RCS, xác thực WSSE), `cfg.py` (nạp config mẫu + config máy, lưu cài đặt), `index.html` (giao diện), `static` (logo G8 HOME, icon) |
 | `tools` | Công cụ phụ (nút trên web cũng gọi các công cụ này): `update_map.bat/.py` (cập nhật bản đồ), `build_map.py` (dựng ảnh bản đồ, update_map gọi), `update_names.bat/.py` (cập nhật tên điểm từ Excel), `simulate.py` (gửi dữ liệu giả), `firewall_open.bat` (mở cổng) |
 | `data` | Dữ liệu tool đang dùng: `nodes.json` (tên ô highbay), `hints.json` (bảng mã lỗi + cách xử lý), `map` (`map.png`, `points.json`, `map_meta.json`, `backup`) |
 | `raw` | Dữ liệu gốc đầu vào: file map xuất từ RCS (`.zip`), file Excel mapping highbay. `raw\upload\`: file tải lên/tải từ RCS qua nút trên web (không đưa lên git) |
 | `docs` | Tài liệu giao thức RCS V3.0.6 (PDF) |
 | `logs` | Log theo ngày (tự tạo, không đưa lên git) |
+
+## Phiên bản
+Số phiên bản ở `src\version.py`, hiện trên thanh trên cùng của web, trang quản trị, tab Hệ thống và tin A14.
+- **1.1.0** (19/10/2026): cảnh báo Telegram (20 loại lỗi nhóm A/B, tin bắt đầu/kết thúc/nhắc), trang quản trị cổng 5504 có mật khẩu, giờ nghỉ offline. Sửa nhận diện: nghi kẹt không cộng thời gian rảnh trước khi nhận task (48% cảnh báo cũ là sai), offline theo `state`, cọc sạc 1080–1083 không còn hiện như robot, task lỗi mới không bị bỏ sót, sạc lỗi tách mã 72xx và dịch chữ Trung. Logo G8 HOME thật.
+- **1.0.0**: thu thập dữ liệu RCS, web giám sát, bản đồ, cập nhật map/highbay (các bản trước khi có số phiên bản).

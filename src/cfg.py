@@ -38,6 +38,17 @@ def save_rcs_auth(user, password):
     """Ghi user/password RCS vào config.json của máy (không đưa lên git)."""
     local = _read(PATH)
     local.setdefault("rcs_api", {}).update(user=user, password=password)
+    _write(local)
+
+
+def save_section(key, value):
+    """Ghi đè một mục (vd "telegram", "alerts") trong config.json của máy. Dùng cho trang quản trị."""
+    local = _read(PATH)
+    local[key] = value
+    _write(local)
+
+
+def _write(local):
     tmp = PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(local, f, ensure_ascii=False, indent=2)

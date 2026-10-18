@@ -1,9 +1,10 @@
 {
-  "_note": "Cổng 5502: RCS đẩy dữ liệu vào (khai trong RCS). Cổng 5503: xem giao diện web. Khai trong RCS: http://192.168.110.189:5502/ics/alarm , /ics/agv-status , /ics/task-status",
+  "_note": "Cổng 5502: RCS đẩy dữ liệu vào (khai trong RCS). Cổng 5503: xem giao diện web. Cổng 5504: trang quản trị (Telegram, có mật khẩu). Khai trong RCS: http://192.168.110.189:5502/ics/alarm , /ics/agv-status , /ics/task-status",
   "listen": {
     "host": "0.0.0.0",
     "port_rcs": 5502,
-    "port_web": 5503
+    "port_web": 5503,
+    "port_admin": 5504
   },
   "paths": {
     "alarm": "/ics/alarm",
@@ -38,12 +39,20 @@
     "LT05",
     "FK02"
   ],
+  "chargers": {
+    "1080": "Cọc sạc 1080",
+    "1081": "Cọc sạc 1081",
+    "1082": "Cọc sạc 1082",
+    "1083": "Cọc sạc 1083"
+  },
+  "_chargers_note": "Thiết bị RCS báo cảnh báo là cọc sạc (không phải robot). Tên toàn số không có trong robots cũng tự coi là cọc sạc.",
+  "_telegram_note": "Telegram (mục telegram, alerts) cấu hình trên trang quản trị cổng 5504, tự ghi vào config.json của máy. Không cần sửa tay.",
   "map_dir": "data/map",
   "xy_offset_mm": [
     0,
     0
   ],
-  "stuck_sec": 180,
+  "stuck_sec": 300,
   "stuck_move_mm": 500,
   "route_jump_mm": 3000,
   "charge_stall_min": 30,
