@@ -200,6 +200,8 @@ Cài đặt lưu vào `config.json` của máy (mục `telegram`, `alerts`), áp
 | B5 | Tải bất thường | Cảnh báo loại 25 | RCS báo hết | 60 giây |
 | B6 | Cọc sạc mất giao tiếp | Cọc sạc báo lỗi lặp lại liên tục | 5 phút không có lỗi mới | 300 giây |
 
+Mọi tin lỗi robot ghi **Tại gần &lt;ô highbay&gt;** (dạng D35-2, ô gần nhất theo toạ độ robot) cho người vận hành, và **Node lỗi: &lt;mã QR&gt;** cho kỹ thuật (ưu tiên `ProbNode` RCS chỉ ra, không có thì node robot đang đứng). Không ghi mã kệ robot đang mang.
+
 Trên trang: bật/tắt từng lỗi, sửa ngưỡng và tham số (pin thấp/pin đủ, số lần lỗi API, "hết sau"), xem các lỗi **đang theo dõi** (đã gửi hay chưa đủ ngưỡng) và **tin nhắn gần đây**. Mọi tin (kể cả không gửi được) ghi vào `logs\YYYY-MM-DD\notify.jsonl`, xem ở tab Hệ thống → log "Tin nhắn Telegram".
 Giới hạn: trạng thái lỗi đang mở nằm trong bộ nhớ; khởi động lại tool thì lỗi đang mở không gửi tin kết thúc (tin A14 báo việc khởi động lại). Tool đang chết thì không tự báo được: thấy thiếu tin A14 sau sự cố mất điện/tắt máy thì kiểm tra máy chạy tool.
 Phát lại log thật 17/10 20:56 → 18/10 16:50 (~20 giờ) với cài đặt mặc định: 65 tin (32 bắt đầu, 27 kết thúc, 6 nhắc).

@@ -337,9 +337,26 @@ def vi(s):
     return CN_VI.get(s) or next((s.replace(k, v) for k, v in CN_VI.items() if k in s), s)
 
 
-def node_desc(code):
-    code = str(code or "")
-    return f"{code} {place(code)}".strip()
+def cell_desc(code="", xy=None):
+    """Ô highbay (dạng D35-2) người vận hành nhớ: điểm là ô thì lấy tên ô, không thì ô gần nhất theo toạ độ; không có toạ độ thì trả mã điểm."""
+    p = place(code)
+    if p:
+        return p
+    n = nearest_cell(xy or POINTS.get(str(code or "")))
+    if n:
+        return f"gần {n[0]} ({n[1]})" + (f", cách {n[2]:.0f} m" if n[2] >= 3 else "")
+    return str(code or "")
+
+
+def cell_name(desc):
+    """'gần D35-2 (Kho 2500), cách 4 m' -> 'D35-2': so hai mô tả có cùng ô không."""
+    return desc.removeprefix("gần ").split(" (")[0]
+
+
+def err_nodes(j):
+    """Node lỗi để kỹ thuật ra kiểm tra: ProbNode RCS chỉ ra, không có thì node robot đang đứng."""
+    sp = j.get("StartPos") if isinstance(j.get("StartPos"), dict) else {}
+    return (json_list(j.get("ProbNode")) or json_list(j.get("QrCode")) or json_list(sp.get("nodeContent")))[:3]
 
 
 def json_list(v):
@@ -372,9 +389,8 @@ def task_ends(dev):
 def load_desc(j, dev):
     """Robot có đang mang tải: ưu tiên StartPos của cảnh báo, không có thì lấy payLoad trong bản tin trạng thái robot."""
     sp = j.get("StartPos") if isinstance(j.get("StartPos"), dict) else {}
-    lid = str(sp.get("loadId") or "")
     if sp.get("payload") is True:
-        return f"đang mang kệ {lid}" if lid and not lid.startswith("vs_") else "đang mang tải"
+        return "đang mang tải"
     if sp.get("payload") is False:
         return "không mang tải"
     try:
@@ -384,7 +400,7 @@ def load_desc(j, dev):
 
 
 def path_info(j, dev):
-    """Cảnh báo loại 23 có ErrorCode (80xx: lập đường lỗi / bị chặn): mang tải, đang ở đâu, đi đâu, bị gì chắn."""
+    """Cảnh báo loại 23 có ErrorCode (80xx: lập đường lỗi / bị chặn): mang tải, đi đâu, bị gì chắn, đoạn lỗi. Vị trí robot và node lỗi do handle_alarm thêm."""
     sp = j.get("StartPos") if isinstance(j.get("StartPos"), dict) else {}
     ep = j.get("EndPos") if isinstance(j.get("EndPos"), dict) else {}
     cur = str(sp.get("nodeContent") or j.get("QrCode") or "")
@@ -394,13 +410,13 @@ def path_info(j, dev):
         dst = tid[-2]
     if not dst:
         dst = task_ends(dev)[1]
-    out = [load_desc(j, dev), cur and f"đang ở {node_desc(cur)}", dst and f"đích {node_desc(dst)}"]
+    out = [load_desc(j, dev), dst and dst != cur and f"đích {cell_desc(dst)}"]
     danger = json_list(j.get("DangerVeh"))
     if danger:
         out.append("chắn bởi " + ", ".join(danger))
-    prob = [n for n in json_list(j.get("ProbNode")) if n not in (cur, dst)]
-    if prob:
-        out.append("điểm vướng " + ", ".join(node_desc(n) for n in prob[:3]))
+    edges = [e for e in (j.get("ProbEdge") or []) if isinstance(e, list) and len(e) == 2]
+    if edges:
+        out.append("đoạn lỗi " + ", ".join(f"{a}→{b}" for a, b in edges[:3]) + (f" (+{len(edges) - 3})" if len(edges) > 3 else ""))
     if "ExpectAngle" in j:
         ang = [angle_deg(a) for a in json_list(j["ExpectAngle"])]
         ang = [a for a in ang if a is not None]
@@ -445,8 +461,6 @@ def parse_alarm_desc(desc, dev=""):
             parts.append(NAME_VI.get(v, v))
     if j.get("Direction"):
         parts.append("hướng " + DIR_VI.get(j["Direction"], str(j["Direction"])))
-    if j.get("TargetShelfNo"):
-        parts.append(f"kệ cần lấy {j['TargetShelfNo']}")
     if "ErrorCode" in j:
         parts += path_info(j, dev)
     if j.get("TaskID"):
@@ -466,9 +480,7 @@ def parse_alarm_desc(desc, dev=""):
         if v is not None and v >= 1000:
             code = str(v)
             break
-    if not parts and j.get("QrCode"):
-        parts.append(f"tại điểm {j['QrCode']}")
-    return ("; ".join(parts) or desc), code, str(j.get("Id") or ""), (pos if isinstance(pos, list) and len(pos) == 2 else None), j
+    return "; ".join(parts), code, str(j.get("Id") or ""), (pos if isinstance(pos, list) and len(pos) == 2 else None), j
 
 
 LABEL = {"start": ("Kệ mất mã QR", "Kiểm tra mã QR dưới đáy kệ (bong, mờ, bẩn) và kệ có đặt lệch/xoay không."),
@@ -480,7 +492,6 @@ def label_lost(dev, j, xy):
     """LableNotFound tách theo giai đoạn task. Theo log thực tế: AbnormalStage 1 = đang vào lấy kệ (chưa có TargetShelfNo), 2 = đang mang kệ.
     Ở điểm đầu task -> kệ mất mã; cách điểm cuối <= label_end_m -> không thấy mã khi trả kệ; còn lại -> không thấy mã trên đường."""
     qr, stage = str(j.get("QrCode") or ""), to_int(j.get("AbnormalStage"))
-    shelf = str(j.get("TargetShelfNo") or j.get("ShelfNo") or "")
     start, end = task_ends(dev)
     xy = xy or POINTS.get(qr)
     lim = float(CFG.get("label_end_m", 3))
@@ -491,13 +502,13 @@ def label_lost(dev, j, xy):
 
     if stage == 1 or near(start) is not None:
         kind = "start"
-        desc = f"Không đọc được mã kệ{' ' + shelf if shelf else ''} khi vào lấy kệ tại {node_desc(start or qr)}"
+        desc = "Không đọc được mã kệ khi vào lấy kệ"
     elif near(end) is not None:
         kind = "end"
-        desc = f"Đang trả kệ {shelf}, còn {near(end):.1f} m tới đích {node_desc(end)} thì không thấy mã (robot tại {node_desc(qr)})"
+        desc = f"Đang trả kệ, còn {near(end):.1f} m tới đích {cell_desc(end)} thì không thấy mã"
     else:
         kind = "way"
-        desc = f"Robot{' đang mang kệ ' + shelf if shelf else ''} không thấy mã tại {node_desc(qr)}" + (f" · đích {node_desc(end)}" if end else "")
+        desc = "Đang mang kệ, không thấy mã trên đường" + (f" · đích {cell_desc(end)}" if end else "")
     return {"kind": kind, "key": f"{dev}·{kind}·{qr}", "title": LABEL[kind][0], "desc": desc, "fix": LABEL[kind][1]}
 
 
@@ -528,8 +539,12 @@ def handle_alarm(d):
     # cọc sạc chập chờn (lỗi rồi hết sau ~1 giây, lặp liên tục): gộp theo loại, không tách theo từng bản tin
     key = f"{dev}|{atype}" if charger else f"{dev}|{atype}|{eid or src}|{raw_desc[:80]}"
     rec = ALARMS.get(key)
-    near = nearest_cell(apos) if apos else None
-    where = f"gần {near[0]} ({near[1]})" if near else ""
+    # vị trí theo ô highbay (D35-2) cho người vận hành, node lỗi (mã QR) cho kỹ thuật
+    rxy = apos or POINTS.get(str(j.get("QrCode") or "")) or (None if charger or dev not in ROBOTS else robot_xy(ROBOTS[dev]))
+    where = cell_desc(xy=rxy) if rxy else ""
+    nodes = [] if charger else err_nodes(j)
+    node = ", ".join(n + (f" [{c}]" if (c := cell_desc(n)) != n and cell_name(c) != cell_name(where) else "") for n in nodes)
+    loc = " · ".join(filter(None, [(where or src) and f"Tại {where or src}", node and f"Node lỗi: {node}"]))
     tname = ALARM_TYPES.get(atype, f"Loại {atype}")
     if charger:
         tname = {1: "Cọc sạc mất kết nối", 4: "Cọc sạc lỗi giao tiếp"}.get(atype, tname)
@@ -537,9 +552,9 @@ def handle_alarm(d):
         # báo ngay; cùng robot + cùng điểm lặp lại (RCS báo hết rồi lại báo) thì không gửi lại cho tới khi im lặng quiet giây
         tname, desc = label["title"], label["desc"]
         if not resolved:
-            NOTI.raise_("label", label["key"], f"{dev}: {tname}", f"{desc} · Xử lý: {label['fix']}")
+            NOTI.raise_("label", label["key"], f"{dev}: {tname}", " · ".join(filter(None, [desc, loc, f"Xử lý: {label['fix']}"])))
     else:
-        alert_alarm(dev, charger, atype, tname, code, desc, where or place(src) or src, resolved, now)
+        alert_alarm(dev, charger, atype, tname, code, desc, loc, resolved, now)
     if rec and now - rec["last"] <= float(CFG.get("alarm_dedup_sec", 300)):
         was = rec["resolved"]
         rec["last"], rec["count"] = now, rec["count"] + 1
@@ -555,12 +570,12 @@ def handle_alarm(d):
         if not resolved:                      # cảnh báo đến lần đầu đã ở trạng thái hết thì không tạo sự cố mới
             lvl = "mid" if charger else {2: "high", 1: "mid"}.get(rec["grade"], "low")
             incident("alarm", lvl, f"{rec['device'] or 'Hệ thống'}: {rec['type_name']}" + (f" (mã {rec['err_code']})" if rec["err_code"] else ""),
-                     (desc + (f" · Tại {where or src}" if (where or src) else "")).strip(), rec["device"])
+                     " · ".join(filter(None, [desc, loc])), rec["device"])
     write_log("alarm", {"time": now_s(), **{k: rec[k] for k in ("device", "type", "type_name", "desc", "grade", "source", "err_code", "resolved", "hint")},
                         "alarmDate_raw": d.get("alarmDate"), "count": rec["count"], "pos": apos, "raw": raw_desc})
 
 
-def alert_alarm(dev, charger, atype, tname, code, desc, where, resolved, now):
+def alert_alarm(dev, charger, atype, tname, code, desc, loc, resolved, now):
     """Cảnh báo RCS -> điều kiện Telegram. Cọc sạc gom vào B6 (hết khi im lặng), loại khác theo bảng ALARM_RULE."""
     rid = "charger" if charger else notify.ALARM_RULE.get(atype)
     if not rid:
@@ -571,7 +586,7 @@ def alert_alarm(dev, charger, atype, tname, code, desc, where, resolved, now):
             NOTI.clear(rid, name)
         return
     h = HINTS["codes"].get(code)
-    detail = " · ".join(filter(None, [desc, h and f"{h[0]}. Xử lý: {h[1]}", where and f"Tại {where}"]))
+    detail = " · ".join(filter(None, [desc, h and f"{h[0]}. Xử lý: {h[1]}", loc]))
     title = f"{name}: lỗi giao tiếp / mất kết nối" if charger else f"{name}: {tname}" + (f" (mã {code})" if code else "")
     NOTI.raise_(rid, name, title, f"{tname}" + (f" (mã {code})" if code else "") + f" · {detail}" if charger else detail)
 
@@ -590,7 +605,9 @@ def handle_task(d):
             TASKS.pop(k, None)
     write_log("task", ev)
     if status in (5, 7):
-        detail = f"{ev['error']} · Robot {ev['device'] or '?'} · Điểm {ev['point']} {ev['point_place']}".strip(" ·")
+        r = ROBOTS.get(ev["device"])
+        where = cell_desc(ev["point"], robot_xy(r) if r else None)
+        detail = " · ".join(filter(None, [ev["error"], f"Robot {ev['device'] or '?'}", where and f"Tại {where}", ev["point"] and f"Node lỗi: {ev['point']}"]))
         incident("task", "high", f"Task {ev['status_name'].lower()}: {ev['order'] or '(không mã)'}", detail, ev["device"])
         NOTI.raise_("task_fail", ev["order"] or "?", f"Task {ev['status_name'].lower()}: {ev['order'] or '(không mã)'}", detail)
     elif ev["order"]:
@@ -660,7 +677,11 @@ def on_orders(data):
         oid = o["order"] or o["number"]
         # chỉ bỏ qua task lỗi có sẵn ở lần hỏi đầu sau khởi động; task mới xuất hiện đã ở trạng thái lỗi vẫn phải báo
         if o["status"] in (5, 7) and not (boot and first) and not (cb and cb.get("status") == o["status"]):
-            detail = f"{o['template_name'] or o['template']} · đường {o['path']} (theo getOrderList)"
+            r = ROBOTS.get(o["agv"])
+            ends = o["path"].split("—")
+            detail = " · ".join(filter(None, [o["template_name"] or o["template"], o["agv"] and f"Robot {o['agv']}",
+                                              r and f"Tại {cell_desc(r['pos'], robot_xy(r))}",
+                                              len(ends) > 1 and f"đường {cell_desc(ends[0])} → {cell_desc(ends[-1])}", "(theo getOrderList)"]))
             incident("task", "high", f"Task {o['status_name'].lower()}: {oid}", detail)
             NOTI.raise_("task_fail", oid, f"Task {o['status_name'].lower()}: {oid}", detail)
         elif o["status"] not in (5, 7):
