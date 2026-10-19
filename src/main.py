@@ -149,14 +149,14 @@ def robot_place(rec):
     """Mô tả vị trí robot theo ô gần nhất mà người vận hành nhớ. Không có toạ độ thì dùng mã điểm."""
     n = nearest_cell(robot_xy(rec))
     if n:
-        return f"Gần {n[0]} ({n[1]})" + (f", cách {n[2]:.0f} m" if n[2] >= 3 else "")
+        return f"Gần {n[0]}" + (f", cách {n[2]:.0f} m" if n[2] >= 3 else "")
     return place(rec.get("pos")) or str(rec.get("pos") or "")
 
 
 def place(code):
     code = str(code or "").strip()
     n = BY_CODE.get(code) or BY_LOC.get(code.upper())
-    return f"{n['l']} ({n['k']})" if n else ""
+    return n["l"] if n else ""                     # chỉ có một khu, không ghi tên khu
 
 
 # ---------------------------------------------------------------- log theo ngày
@@ -344,13 +344,13 @@ def cell_desc(code="", xy=None):
         return p
     n = nearest_cell(xy or POINTS.get(str(code or "")))
     if n:
-        return f"gần {n[0]} ({n[1]})" + (f", cách {n[2]:.0f} m" if n[2] >= 3 else "")
+        return f"gần {n[0]}" + (f", cách {n[2]:.0f} m" if n[2] >= 3 else "")
     return str(code or "")
 
 
 def cell_name(desc):
-    """'gần D35-2 (Kho 2500), cách 4 m' -> 'D35-2': so hai mô tả có cùng ô không."""
-    return desc.removeprefix("gần ").split(" (")[0]
+    """'gần D35-2, cách 4 m' -> 'D35-2': so hai mô tả có cùng ô không."""
+    return desc.removeprefix("gần ").split(",")[0]
 
 
 def err_nodes(j):
