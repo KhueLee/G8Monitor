@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse, Response
+from starlette.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 import admin
@@ -323,7 +323,8 @@ def handle_agv(items):
 
 
 REASON_VI = {"LableNotFound": "Không thấy nhãn/mã kệ (LableNotFound)", "FreePathObstacleInPath": "Có vật cản trên đường đi (FreePathObstacleInPath)",
-             "NoLegMovingOverShift": "Chân kệ lệch khi di chuyển (NoLegMovingOverShift)"}
+             "NoLegMovingOverShift": "Chân kệ lệch khi di chuyển (NoLegMovingOverShift)",
+             "FreePathDangerInPath": "Có vật nguy hiểm/chướng ngại trên đường đi (FreePathDangerInPath)"}
 DIR_VI = {"front": "phía trước", "back": "phía sau", "left": "bên trái", "right": "bên phải"}
 # chữ Trung RCS hay gửi kèm -> tiếng Việt
 CN_VI = {"空闲": "rảnh", "离线": "offline", "充电中": "đang sạc", "充电": "sạc", "任务中": "đang chạy task", "执行任务": "đang chạy task", "故障": "lỗi",
@@ -336,14 +337,96 @@ def vi(s):
     return CN_VI.get(s) or next((s.replace(k, v) for k, v in CN_VI.items() if k in s), s)
 
 
-def parse_alarm_desc(desc):
-    """RCS gửi alarmDesc dạng JSON. Trả về (mô tả dễ đọc, mã lỗi số, id sự kiện, toạ độ mm)."""
+def node_desc(code):
+    code = str(code or "")
+    return f"{code} {place(code)}".strip()
+
+
+def json_list(v):
+    """RCS gửi danh sách lúc là mảng, lúc là chuỗi JSON '["LT02"]'."""
+    if isinstance(v, str):
+        try:
+            v = json.loads(v)
+        except ValueError:
+            pass
+    return [str(x) for x in (v if isinstance(v, list) else [v]) if x not in (None, "")]
+
+
+def dist_m(xy, code):
+    p = POINTS.get(str(code or ""))
+    if not xy or not p:
+        return None
+    return ((p[0] - xy[0]) ** 2 + (p[1] - xy[1]) ** 2) ** 0.5 / 1000.0
+
+
+def task_ends(dev):
+    """(điểm đầu, điểm cuối) task robot đang chạy theo getOrderList; không có thì lấy điểm cuối đường đi getRobotTaskPath."""
+    for o in ORDERS["list"]:
+        if o.get("agv") == dev and o["status"] in (6, 7, 9) and "—" in o["path"]:
+            p = o["path"].split("—")
+            return p[0], p[-1]
+    nodes = (ROUTES.get(dev) or {}).get("nodes")
+    return "", (nodes[-1][0] if nodes else "")
+
+
+def load_desc(j, dev):
+    """Robot có đang mang tải: ưu tiên StartPos của cảnh báo, không có thì lấy payLoad trong bản tin trạng thái robot."""
+    sp = j.get("StartPos") if isinstance(j.get("StartPos"), dict) else {}
+    lid = str(sp.get("loadId") or "")
+    if sp.get("payload") is True:
+        return f"đang mang kệ {lid}" if lid and not lid.startswith("vs_") else "đang mang tải"
+    if sp.get("payload") is False:
+        return "không mang tải"
+    try:
+        return "đang mang tải" if float((ROBOTS.get(dev) or {}).get("payload") or "") > 0 else "không mang tải"
+    except ValueError:
+        return ""
+
+
+def path_info(j, dev):
+    """Cảnh báo loại 23 có ErrorCode (80xx: lập đường lỗi / bị chặn): mang tải, đang ở đâu, đi đâu, bị gì chắn."""
+    sp = j.get("StartPos") if isinstance(j.get("StartPos"), dict) else {}
+    ep = j.get("EndPos") if isinstance(j.get("EndPos"), dict) else {}
+    cur = str(sp.get("nodeContent") or j.get("QrCode") or "")
+    dst = str(ep.get("nodeContent") or "")
+    tid = str(j.get("TaskID") or "").split("_")
+    if not dst and len(tid) >= 3:                             # TaskID dạng 2@52391@166643_<điểm đích>_<góc>
+        dst = tid[-2]
+    if not dst:
+        dst = task_ends(dev)[1]
+    out = [load_desc(j, dev), cur and f"đang ở {node_desc(cur)}", dst and f"đích {node_desc(dst)}"]
+    danger = json_list(j.get("DangerVeh"))
+    if danger:
+        out.append("chắn bởi " + ", ".join(danger))
+    prob = [n for n in json_list(j.get("ProbNode")) if n not in (cur, dst)]
+    if prob:
+        out.append("điểm vướng " + ", ".join(node_desc(n) for n in prob[:3]))
+    if "ExpectAngle" in j:
+        ang = [angle_deg(a) for a in json_list(j["ExpectAngle"])]
+        ang = [a for a in ang if a is not None]
+        out.append("góc đích yêu cầu " + "/".join(f"{a:g}°" for a in ang) if ang else "không yêu cầu góc đích")
+    d = angle_deg(j.get("abnDir"))
+    if d is not None:
+        out.append(f"hướng lỗi {d:g}°")
+    return [p for p in out if p]
+
+
+def angle_deg(v):
+    """Góc RCS: lúc độ (90), lúc phần nghìn độ (270000); 999 / 999000 = không yêu cầu, -1000 = không có -> None."""
+    v = to_int(v)
+    if v is None or v in (999, 999000, -1000):
+        return None
+    return v / 1000 if abs(v) >= 1000 else v
+
+
+def parse_alarm_desc(desc, dev=""):
+    """RCS gửi alarmDesc dạng JSON. Trả về (mô tả dễ đọc, mã lỗi số, id sự kiện, toạ độ mm, JSON gốc)."""
     try:
         j = json.loads(desc)
     except Exception:
-        return vi(desc), "", "", None
+        return vi(desc), "", "", None, {}
     if not isinstance(j, dict):
-        return vi(desc), "", "", None
+        return vi(desc), "", "", None, {}
     pos = j.get("Position")
     if isinstance(pos, str):
         try:
@@ -364,6 +447,8 @@ def parse_alarm_desc(desc):
         parts.append("hướng " + DIR_VI.get(j["Direction"], str(j["Direction"])))
     if j.get("TargetShelfNo"):
         parts.append(f"kệ cần lấy {j['TargetShelfNo']}")
+    if "ErrorCode" in j:
+        parts += path_info(j, dev)
     if j.get("TaskID"):
         parts.append(f"task {j['TaskID']}")
     if j.get("ChargeStationID"):
@@ -376,14 +461,44 @@ def parse_alarm_desc(desc):
     if j.get("deviceCode"):
         parts.append(f"thiết bị {j['deviceCode']}")
     code = ""
-    for k in ("errorCode", "ReasonCode", "Reason"):           # sạc lỗi: errorCode 72xx; robot: Reason >= 1000
+    for k in ("errorCode", "ErrorCode", "ReasonCode", "Reason"):   # sạc lỗi: errorCode 72xx; đường đi: ErrorCode 80xx; robot: Reason >= 1000
         v = to_int(j.get(k))
         if v is not None and v >= 1000:
             code = str(v)
             break
     if not parts and j.get("QrCode"):
         parts.append(f"tại điểm {j['QrCode']}")
-    return ("; ".join(parts) or desc), code, str(j.get("Id") or ""), (pos if isinstance(pos, list) and len(pos) == 2 else None)
+    return ("; ".join(parts) or desc), code, str(j.get("Id") or ""), (pos if isinstance(pos, list) and len(pos) == 2 else None), j
+
+
+LABEL = {"start": ("Kệ mất mã QR", "Kiểm tra mã QR dưới đáy kệ (bong, mờ, bẩn) và kệ có đặt lệch/xoay không."),
+         "end": ("Không thấy mã khi trả kệ", "Kiểm tra mã QR sàn tại điểm trả và kệ có bị lệch trên robot không."),
+         "way": ("Không tìm thấy mã trên đường đi", "Kiểm tra mã QR sàn tại điểm robot dừng (bong, mờ, bẩn).")}
+
+
+def label_lost(dev, j, xy):
+    """LableNotFound tách theo giai đoạn task. Theo log thực tế: AbnormalStage 1 = đang vào lấy kệ (chưa có TargetShelfNo), 2 = đang mang kệ.
+    Ở điểm đầu task -> kệ mất mã; cách điểm cuối <= label_end_m -> không thấy mã khi trả kệ; còn lại -> không thấy mã trên đường."""
+    qr, stage = str(j.get("QrCode") or ""), to_int(j.get("AbnormalStage"))
+    shelf = str(j.get("TargetShelfNo") or j.get("ShelfNo") or "")
+    start, end = task_ends(dev)
+    xy = xy or POINTS.get(qr)
+    lim = float(CFG.get("label_end_m", 3))
+
+    def near(c):
+        d = 0.0 if c and c == qr else dist_m(xy, c)
+        return d if d is not None and d <= lim else None
+
+    if stage == 1 or near(start) is not None:
+        kind = "start"
+        desc = f"Không đọc được mã kệ{' ' + shelf if shelf else ''} khi vào lấy kệ tại {node_desc(start or qr)}"
+    elif near(end) is not None:
+        kind = "end"
+        desc = f"Đang trả kệ {shelf}, còn {near(end):.1f} m tới đích {node_desc(end)} thì không thấy mã (robot tại {node_desc(qr)})"
+    else:
+        kind = "way"
+        desc = f"Robot{' đang mang kệ ' + shelf if shelf else ''} không thấy mã tại {node_desc(qr)}" + (f" · đích {node_desc(end)}" if end else "")
+    return {"kind": kind, "key": f"{dev}·{kind}·{qr}", "title": LABEL[kind][0], "desc": desc, "fix": LABEL[kind][1]}
 
 
 def charger_name(dev):
@@ -401,10 +516,11 @@ def handle_alarm(d):
     now = time.time()
     atype = to_int(d.get("alarmType"), 0)
     raw_desc = str(d.get("alarmDesc") or "")
-    desc, jcode, eid, apos = parse_alarm_desc(raw_desc)
     dev = str(d.get("deviceNum") or d.get("deviceName") or "")
     dev = CFG.get("alias", {}).get(dev, dev)
+    desc, jcode, eid, apos, j = parse_alarm_desc(raw_desc, dev)
     charger = charger_name(dev)
+    label = label_lost(dev, j, apos) if j.get("Reason") == "LableNotFound" and not charger else None
     src = str(d.get("channelDeviceId") or "")
     resolved = to_int(d.get("alarmStatus")) == 1
     m = re.search(r"\((\d{4,5})\)", raw_desc)
@@ -417,7 +533,13 @@ def handle_alarm(d):
     tname = ALARM_TYPES.get(atype, f"Loại {atype}")
     if charger:
         tname = {1: "Cọc sạc mất kết nối", 4: "Cọc sạc lỗi giao tiếp"}.get(atype, tname)
-    alert_alarm(dev, charger, atype, tname, code, desc, where or place(src) or src, resolved, now)
+    if label:
+        # báo ngay; cùng robot + cùng điểm lặp lại (RCS báo hết rồi lại báo) thì không gửi lại cho tới khi im lặng quiet giây
+        tname, desc = label["title"], label["desc"]
+        if not resolved:
+            NOTI.raise_("label", label["key"], f"{dev}: {tname}", f"{desc} · Xử lý: {label['fix']}")
+    else:
+        alert_alarm(dev, charger, atype, tname, code, desc, where or place(src) or src, resolved, now)
     if rec and now - rec["last"] <= float(CFG.get("alarm_dedup_sec", 300)):
         was = rec["resolved"]
         rec["last"], rec["count"] = now, rec["count"] + 1
@@ -525,7 +647,9 @@ def on_orders(data):
         "order": str(t.get("OrderId") or ""), "task_id": t.get("TaskId"), "number": str(t.get("OrderNumber") or ""), "status": to_int(t.get("OrderStatus")),
         "status_name": ORDER_STATUS.get(to_int(t.get("OrderStatus")), str(t.get("OrderStatus"))), "template": str(t.get("TemplateCode") or ""),
         "template_name": str(t.get("TemplateName") or ""), "path": str(t.get("OrderPath") or ""), "priority": to_int(t.get("Priority")),
-        "robot_type": str(t.get("RobotType") or ""), "created": str(t.get("createTime") or ""), "zone": t.get("ZoneId")} for t in tasks if isinstance(t, dict)])
+        "robot_type": str(t.get("RobotType") or ""), "created": str(t.get("createTime") or ""), "zone": t.get("ZoneId"),
+        "agv": CFG.get("alias", {}).get(str(t.get("AgvNum") or ""), str(t.get("AgvNum") or "")), "shelf": str(t.get("ShelfNum") or "")}
+        for t in tasks if isinstance(t, dict)])
     for o in ORDERS["list"]:
         if ORDER_SEEN.get(o["order"]) == o["status"]:
             continue
@@ -990,7 +1114,23 @@ async def download(request: Request):
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", d) or not re.fullmatch(r"[a-z]+\.jsonl", f):
         return J({"error": "không hợp lệ"}, 400)
     p = os.path.join(LOG_DIR, d, f)
-    return FileResponse(p, filename=f"{d}_{f}") if os.path.exists(p) else J({"error": "không có file"}, 404)
+    if not os.path.exists(p):
+        return J({"error": "không có file"}, 404)
+    # file log vẫn đang được ghi thêm -> chỉ gửi đúng số byte lúc bắt đầu, nếu không sẽ lố Content-Length
+    size = os.path.getsize(p)
+
+    def chunks():
+        left = size
+        with open(p, "rb") as fh:
+            while left > 0:
+                b = fh.read(min(65536, left))
+                if not b:
+                    break
+                left -= len(b)
+                yield b
+
+    return StreamingResponse(chunks(), media_type="application/octet-stream",
+                             headers={"Content-Length": str(size), "Content-Disposition": f'attachment; filename="{d}_{f}"'})
 
 
 async def api_map(request: Request):

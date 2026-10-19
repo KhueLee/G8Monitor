@@ -192,8 +192,9 @@ Cài đặt lưu vào `config.json` của máy (mục `telegram`, `alerts`), áp
 | A12 | RCS ngừng gửi dữ liệu | Không có bản tin trạng thái robot (khi đó không báo A10 từng robot) | Bản tin đến lại | 120 giây |
 | A13 | Không gọi được API RCS | 3 lần gọi lỗi liên tiếp | Gọi được lại | 0 |
 | A14 | Monitor khởi động lại | Mỗi lần tool khởi động (kèm giờ bản ghi cuối trước đó) | — | — |
+| A15 | Không thấy mã kệ / mã đường | Cảnh báo loại 22 `LableNotFound`, tách 3 trường hợp: ở điểm đầu task (hoặc `AbnormalStage=1`) → **kệ mất mã QR**; cách điểm cuối ≤ `label_end_m` (3 m) → **không thấy mã khi trả kệ**; còn lại → **không thấy mã trên đường đi**. Không còn báo qua B3 | Cùng robot + cùng điểm 10 phút không lặp lại (lặp lại trong lúc đó không gửi lại) | 0 |
 | B1 | Nghi kẹt | Đang chạy task, di chuyển < 0,5 m (tính từ lúc nhận task) | Đi được > 0,5 m hoặc hết chạy task | 300 giây |
-| B2 | Đường đi bất thường | Cảnh báo loại 23 | RCS báo hết | 60 giây |
+| B2 | Đường đi bất thường | Cảnh báo loại 23. Có mã 80xx thì tin kèm: ý nghĩa mã, có mang tải/kệ không, điểm hiện tại, điểm đích, robot/kệ đang chắn (`DangerVeh`), điểm vướng (`ProbNode`), góc đích yêu cầu (`ExpectAngle`), hướng lỗi (`abnDir`) | RCS báo hết | 60 giây |
 | B3 | Kệ bất thường | Cảnh báo loại 22 | RCS báo hết | 60 giây |
 | B4 | Có vật cản | Cảnh báo loại 12 | RCS báo hết | 180 giây |
 | B5 | Tải bất thường | Cảnh báo loại 25 | RCS báo hết | 60 giây |

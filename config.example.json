@@ -57,6 +57,8 @@
   "route_jump_mm": 3000,
   "charge_stall_min": 30,
   "task_fail_minutes": 30,
+  "label_end_m": 3,
+  "_label_note": "Cảnh báo không thấy mã (LableNotFound): robot cách điểm cuối task <= label_end_m mét thì báo 'không thấy mã khi trả kệ'.",
   "_map_note": "Toạ độ robot RCS gửi (devicePostionRec) đang giả định là mm cùng hệ với bản đồ. Nếu robot hiện lệch đều một khoảng so với đường đi, chỉnh xy_offset_mm.",
   "public_host": "http://192.168.110.189",
   "map_model": "RTA-C060",

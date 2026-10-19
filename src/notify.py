@@ -41,6 +41,8 @@ RULES = [
      "start": "Số lần gọi lỗi liên tiếp đạt 'Số lần lỗi'", "stop": "Gọi thành công lại"},
     {"id": "startup", "code": "A14", "name": "Monitor khởi động lại", "delay": 0, "end": "once",
      "start": "Mỗi lần G8 Monitor khởi động", "stop": "—"},
+    {"id": "label", "code": "A15", "name": "Không thấy mã kệ / mã đường", "delay": 0, "end": "quiet", "quiet": 600, "alarm": True,
+     "start": "Cảnh báo RCS loại 22 LableNotFound, tách theo lúc lấy kệ / trả kệ / trên đường", "stop": "Cùng robot, cùng điểm không lặp lại trong 'Hết sau'"},
     {"id": "stuck", "code": "B1", "name": "Nghi kẹt (đứng yên khi chạy task)", "delay": 300, "end": "status",
      "start": "Đang chạy task, di chuyển dưới 0,5 m quá ngưỡng (tính từ lúc nhận task)", "stop": "Đi được hơn 0,5 m hoặc hết chạy task"},
     {"id": "path", "code": "B2", "name": "Đường đi bất thường", "delay": 60, "end": "status", "alarm": True,
