@@ -10,6 +10,8 @@ echo    http://192.168.110.189:5502/ics/alarm
 echo    http://192.168.110.189:5502/ics/task-status
 echo  QUAN TRI TELEGRAM (co mat khau):
 echo    http://192.168.110.189:5504
+echo  KEO FILE TU XA (cung mat khau quan tri, file dat trong thu muc share):
+echo    http://192.168.110.189:5505
 echo  Neu khong vao duoc: chay tools\firewall_open.bat (Run as administrator)
 echo ============================================
 python src\main.py

@@ -28,16 +28,28 @@ button:disabled{opacity:.5}
 .f .st{font-size:13px;margin-top:2px;color:var(--mut)}.f .st.err{color:var(--red)}.f .st.ok{color:var(--ok)}
 .prog{height:8px;background:#e8e8eb;border-radius:99px;overflow:hidden;margin-top:6px}.prog i{display:block;height:100%;width:0;background:var(--g);transition:width .3s}
 .empty{color:var(--mut);padding:12px 0}
+#login{max-width:380px;margin:40px auto}
+label{display:block;font-size:14px;color:var(--mut);margin:8px 0 2px}
+input{font:inherit;font-size:16px;padding:9px 10px;border:1px solid #c5ccd3;border-radius:10px;background:#fff;min-height:44px;width:100%}
+.acts{display:flex;gap:8px;margin-top:12px}.msg{font-size:14px;margin-top:8px;min-height:20px;color:var(--red)}
 </style>
 </head>
 <body>
-<header><img src="/static/logo.png" alt="G8 HOME"><span class="t">Monitor · Kéo file <small>v{{VERSION}}</small></span><span class="sp"></span><button id="reload">Tải lại danh sách</button></header>
+<header><img src="/static/logo.png" alt="G8 HOME"><span class="t">Monitor · Kéo file <small>v{{VERSION}}</small></span><span class="sp"></span><button id="reload" hidden>Tải lại</button><button id="out" hidden>Đăng xuất</button></header>
 <main>
+<section class="card" id="login" hidden>
+  <h2>Đăng nhập</h2>
+  <div class="mut">Cùng mật khẩu với trang quản trị (cổng 5504).</div>
+  <label for="pw">Mật khẩu</label><input id="pw" type="password" autocomplete="current-password">
+  <div class="acts"><button class="pri" id="go">Đăng nhập</button></div><div class="msg" id="lmsg"></div>
+</section>
+<div id="app" hidden>
 <section class="card">
   <h2>File trên máy chủ</h2>
   <div class="mut" id="info">Đang tải danh sách…</div>
 </section>
 <section class="card" id="list"></section>
+</div>
 </main>
 <script>
 const $=s=>document.querySelector(s);
@@ -46,10 +58,13 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const MB=n=>n<1048576?(n/1024).toFixed(1)+" KB":(n/1048576).toFixed(n<10485760?2:1)+" MB";
 const T=s=>new Date(s*1000).toLocaleString("vi-VN");
 let busy=false;
+function show(on){$("#login").hidden=on;$("#app").hidden=!on;$("#out").hidden=!on;$("#reload").hidden=!on;if(!on)$("#pw").focus()}
 function setBusy(b){busy=b;document.querySelectorAll(".f button").forEach(x=>x.disabled=b)}
 
 async function load(){const L=$("#list");L.textContent="";
-  let d;try{d=await (await fetch("/api/files",{cache:"no-store"})).json()}catch(e){$("#info").textContent="⚠ Mất kết nối tool";return}
+  let r;try{r=await fetch("/api/files",{cache:"no-store"})}catch(e){show(true);$("#info").textContent="⚠ Mất kết nối tool";return}
+  const d=await r.json().catch(()=>({error:"Lỗi "+r.status}));if(d.login){show(false);return}show(true);
+  if(d.error){$("#info").textContent="⚠ "+d.error;return}
   $("#info").textContent="Thư mục: "+d.folder+" · "+d.files.length+" file. Chép file vào thư mục này trên máy chủ rồi bấm Tải lại danh sách.";
   if(!d.files.length){L.append(el("div","empty","Chưa có file nào."));return}
   for(const f of d.files){const r=el("div","f"),n=el("div","n"),st=el("div","st",MB(f.size)+" · "+T(f.mtime)),b=el("button","pri","Tải về");
@@ -61,6 +76,7 @@ async function pull(f,st,box){if(busy)return;setBusy(true);st.className="st";
   const CH=1048576,parts=[],url="/api/file?name="+encodeURIComponent(f.name)+"&v="+f.mtime,size=f.size,P=el("div","prog");P.append(el("i"));box.append(P);
   try{for(let off=0;off<size;off+=CH){const end=Math.min(size,off+CH)-1;
       for(let k=1;;k++){try{const r=await fetch(url,{headers:{Range:"bytes="+off+"-"+end},cache:"no-store"});
+          if(r.status===401){show(false);const e=new Error("Cần đăng nhập lại");e.stop=true;throw e}
           if(r.status===404||r.status===409){const e=new Error((await r.json().catch(()=>({}))).error||("máy chủ trả "+r.status));e.stop=true;throw e}
           if(r.status!==206)throw new Error("máy chủ trả "+r.status);const b=await r.arrayBuffer();if(b.byteLength!==end-off+1)throw new Error("thiếu dữ liệu");parts.push(b);break}
         catch(e){if(e.stop||k>=10){st.className="st err";st.textContent="⚠ "+(e.stop?e.message:"Không kéo được file sau 10 lần thử ("+e.message+")");throw e}
@@ -71,6 +87,11 @@ async function pull(f,st,box){if(busy)return;setBusy(true);st.className="st";
   finally{P.remove();setBusy(false)}}
 
 $("#reload").onclick=load;
+$("#go").onclick=async()=>{const r=await fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:$("#pw").value})}).catch(()=>null);
+  const d=r?await r.json().catch(()=>({error:"Lỗi "+r.status})):{error:"Mất kết nối tool"};
+  if(d.error){$("#lmsg").textContent=d.error;return}$("#pw").value="";$("#lmsg").textContent="";load()};
+$("#pw").onkeydown=e=>{if(e.key==="Enter")$("#go").click()};
+$("#out").onclick=async()=>{await fetch("/api/logout",{method:"POST"}).catch(()=>null);$("#list").textContent="";show(false)};
 load();
 </script>
 </body>

@@ -15,7 +15,7 @@ RCS/ICS **tự đẩy** dữ liệu lên tool này (trạng thái robot, cảnh 
    Máy client chỉ tải về và cập nhật (`clone`, `pull`), không đẩy code lên nên không cần khai `user.name`/`user.email`. Nếu Git vẫn hiện cửa sổ đăng nhập thì gõ sai địa chỉ repo, bấm huỷ và kiểm tra lại URL.
 4. Cài Python 3 (https://www.python.org/downloads/, tích **Add python.exe to PATH** khi cài) rồi làm tiếp phần **Cài và chạy** bên dưới.
 
-**Cập nhật bản mới**: tắt tool (đóng cửa sổ `start.bat`), rồi trong thư mục tool chạy `git pull` (không cần đăng nhập), sau đó chạy lại `start.bat`.
+**Cập nhật bản mới**: tắt tool (đóng cửa sổ `start.bat`), bấm đúp **`update.bat`** (tự chạy `git pull`, không cần đăng nhập), sau đó chạy lại `start.bat`. Không có `update.bat` (máy clone bản cũ) thì chạy `git pull` trong thư mục tool một lần.
 - `config.json` là cấu hình riêng của từng máy, **không đưa lên git**, nên `git pull` không ghi đè. Trên git chỉ có file mẫu `config.example.json`. Lần đầu chạy, tool tự chép mẫu thành `config.json`, sau đó sửa `config.json` theo máy.
 - Tool đọc `config.example.json` làm giá trị mặc định rồi lấy `config.json` đè lên, nên **khóa mới trong bản mới tự có hiệu lực**, không phải chép tay. Chỉ cần sửa `config.json` khi muốn khác mặc định.
 - **Máy đã chạy bản cũ**: `config.json` cũ có `"area_id": 1` sẽ đè mặc định 2. Mở `config.json`, sửa `rcs_api` → `"area_id": 2` (hoặc xoá dòng `area_id` để dùng mặc định). `base` đang trống thì tool tự dùng `http://192.168.110.100:7000`.
@@ -25,7 +25,7 @@ RCS/ICS **tự đẩy** dữ liệu lên tool này (trạng thái robot, cảnh 
 
 ## Cài và chạy
 1. `pip install -r requirements.txt` (chạy tool chỉ cần `starlette uvicorn`; `pillow numpy openpyxl` dùng cho công cụ cập nhật bản đồ/tên điểm)
-2. Chạy `start.bat`. **Xem giao diện: `http://192.168.110.189:5503`** (cổng web). **RCS đẩy dữ liệu vào cổng 5502** (cổng nhận, tách riêng khỏi web). **Trang quản trị Telegram: `http://192.168.110.189:5504`** (cần mật khẩu). **Kéo file: `http://192.168.110.189:5505`**.
+2. Chạy `start.bat`. **Xem giao diện: `http://192.168.110.189:5503`** (cổng web). **RCS đẩy dữ liệu vào cổng 5502** (cổng nhận, tách riêng khỏi web). **Trang quản trị Telegram: `http://192.168.110.189:5504`** (cần mật khẩu). **Kéo file: `http://192.168.110.189:5505`** (cùng mật khẩu quản trị).
 3. Chạy `tools\firewall_open.bat` bằng **Run as administrator** một lần (mở 5502, 5503, 5504 và 5505). Máy đã chạy bản cũ thì chạy lại để mở thêm cổng mới.
 4. PC chạy tool phải có IP cố định 192.168.110.189.
 
@@ -207,12 +207,12 @@ Giới hạn: trạng thái lỗi đang mở nằm trong bộ nhớ; khởi đ�
 Phát lại log thật 17/10 20:56 → 18/10 16:50 (~20 giờ) với cài đặt mặc định: 65 tin (32 bắt đầu, 27 kết thúc, 6 nhắc).
 
 ## Kéo file từ xa (cổng 5505)
-Mở `http://192.168.110.189:5505`: trang liệt kê mọi file trong thư mục **`share\`** của tool (kể cả thư mục con, file mới nhất lên đầu), bấm **Tải về** để kéo file về máy đang xem.
+Mở `http://192.168.110.189:5505`, đăng nhập bằng **mật khẩu trang quản trị** (`ADMIN_PASSWORD` trong `src\admin.py`, cùng cách khóa IP khi sai 5 lần). Hai trang dùng chung phiên: đăng nhập/đăng xuất ở trang này cũng là ở trang kia. Trang liệt kê mọi file trong thư mục **`share\`** của tool (kể cả thư mục con, file mới nhất lên đầu), bấm **Tải về** để kéo file về máy đang xem.
 - Phía máy chủ chỉ cần **chép file vào `share\`** (tool tự tạo thư mục khi chạy). Trang không tự làm mới: bấm **Tải lại danh sách** hoặc tải lại trang.
-- Kéo về giống nút tải map: chia **từng khúc 1 MB**, khúc lỗi thì chờ rồi thử lại (tối đa 10 lần), có thanh tiến độ. Mỗi lúc tải một file.
+- Kéo về giống nút tải map: chia **từng khúc 1 MB**, khúc lỗi thì chờ rồi thử lại (tối đa 10 lần), có thanh tiến độ. Mỗi lúc tải một file. Hết phiên đăng nhập giữa chừng thì trang hiện lại ô mật khẩu.
 - File trên máy chủ bị thay (sửa/chép đè) trong lúc đang kéo thì báo lỗi, tải lại trang rồi bấm lại, tránh ghép lẫn hai bản.
 - File được ghép trong bộ nhớ trình duyệt rồi mới lưu, nên file rất lớn (vài GB) có thể không tải được; nên nén/chia nhỏ trước.
-- Nội dung `share\` không đưa lên git. File/thư mục bắt đầu bằng dấu chấm bị ẩn. **Trang không có mật khẩu**: ai vào được mạng LAN cũng tải được mọi file trong `share\`, đừng để file nhạy cảm ở đó.
+- Nội dung `share\` không đưa lên git. File/thư mục bắt đầu bằng dấu chấm bị ẩn. Ai có mật khẩu quản trị là tải được mọi file trong `share\`.
 - Đổi thư mục bằng `share_dir` (đường dẫn tính từ thư mục tool), đổi cổng bằng `listen.port_share` trong `config.json`.
 
 ## Log theo ngày
@@ -242,7 +242,7 @@ Cấu hình riêng của máy, không đưa lên git (tự tạo từ `config.ex
 
 ## Lưu ý
 - Tài liệu V3.0.6 không có trường "đã xử lý" của cảnh báo, nên tool dựa vào thời gian (`alarm_active_minutes`) và trạng thái robot.
-- Chỉ dùng trong LAN. Web 5503 không có đăng nhập; trang quản trị 5504 có mật khẩu. Truy cập từ xa (VPN/Tailscale) để giai đoạn sau.
+- Chỉ dùng trong LAN. Web 5503 không có đăng nhập; trang quản trị 5504 và trang kéo file 5505 có mật khẩu. Truy cập từ xa (VPN/Tailscale) để giai đoạn sau.
 - `alarmGrade` RCS gửi 1/2/3, tool đang hiểu 2 = cao, 1 = vừa, còn lại thấp (ví dụ Va chạm mức 3 hiện mức thấp trên web). Chưa đối chiếu được với tài liệu; Telegram không phụ thuộc mức này.
 - Ý nghĩa mã sạc lỗi 7203/7205/7207/7209/7214 chưa có trong `data\hints.json`, tin chỉ hiện mã.
 - Ngoài nhận dữ liệu RCS đẩy lên, tool chỉ gọi API đọc (xem **Các API tool gọi lên RCS**), không gửi lệnh nên không ảnh hưởng vận hành.
@@ -251,6 +251,7 @@ Cấu hình riêng của máy, không đưa lên git (tự tạo từ `config.ex
 | Thư mục / file | Nội dung |
 |---|---|
 | `start.bat` | Chạy tool (bấm đúp) |
+| `update.bat` | Cập nhật bản mới từ GitHub (bấm đúp, chạy `git pull`) |
 | `config.example.json` | Cấu hình mẫu (đưa lên git) |
 | `config.json` | Cấu hình của máy (alias robot, rcs_api, ngưỡng cảnh báo...), tự tạo từ mẫu, không đưa lên git |
 | `src` | Tool chính: `main.py` (nhận dữ liệu, hỏi RCS, web), `notify.py` (luật cảnh báo + gửi Telegram), `admin.py` + `admin.html` (trang quản trị 5504), `share.py` + `share.html` (trang kéo file 5505), `version.py` (số phiên bản), `rcs_api.py` (gọi API RCS, xác thực WSSE), `cfg.py` (nạp config mẫu + config máy, lưu cài đặt), `index.html` (giao diện), `static` (logo G8 HOME, icon) |
@@ -263,6 +264,7 @@ Cấu hình riêng của máy, không đưa lên git (tự tạo từ `config.ex
 
 ## Phiên bản
 Số phiên bản ở `src\version.py`, hiện trên thanh trên cùng của web, trang quản trị, tab Hệ thống và tin A14.
+- **1.3.0** (23/10/2026): trang kéo file 5505 cần mật khẩu (dùng chung đăng nhập với trang quản trị). Thêm `update.bat` bấm là `git pull`.
 - **1.2.0** (23/10/2026): trang kéo file từ xa cổng 5505 (thư mục `share\`, tải theo khúc 1 MB, thử lại khúc lỗi).
 - **1.1.0** (19/10/2026): cảnh báo Telegram (20 loại lỗi nhóm A/B, tin bắt đầu/kết thúc/nhắc), trang quản trị cổng 5504 có mật khẩu, giờ nghỉ offline. Sửa nhận diện: nghi kẹt không cộng thời gian rảnh trước khi nhận task (48% cảnh báo cũ là sai), offline theo `state`, cọc sạc 1080–1083 không còn hiện như robot, task lỗi mới không bị bỏ sót, sạc lỗi tách mã 72xx và dịch chữ Trung. Logo G8 HOME thật.
 - **1.0.0**: thu thập dữ liệu RCS, web giám sát, bản đồ, cập nhật map/highbay (các bản trước khi có số phiên bản).

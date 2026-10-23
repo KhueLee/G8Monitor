@@ -1,4 +1,4 @@
-"""Trang quản trị cổng 5504: bật/tắt Telegram, cấu hình bot, ngưỡng và danh sách lỗi được đẩy tin. Cần mật khẩu (cố định trong code).
+"""Trang quản trị cổng 5504 (đăng nhập dùng chung với trang kéo file 5505): bật/tắt Telegram, cấu hình bot, ngưỡng và danh sách lỗi được đẩy tin. Cần mật khẩu (cố định trong code).
 Phiên đăng nhập là cookie ngẫu nhiên giữ trong bộ nhớ (khởi động lại tool thì phải đăng nhập lại). Sai mật khẩu 5 lần thì khóa IP đó 5 phút.
 """
 import asyncio
@@ -49,6 +49,40 @@ def num(v, lo, hi, default):
     return int(v) if v == int(v) else v
 
 
+async def login(request):
+    """Đăng nhập chung cho trang quản trị 5504 và trang kéo file 5505 (cùng mật khẩu, cùng phiên)."""
+    ip = request.client.host if request.client else ""
+    f = FAILS.get(ip, [0, 0])
+    if f[1] > time.time():
+        return J({"error": f"Sai mật khẩu quá nhiều lần, thử lại sau {int(f[1] - time.time()) // 60 + 1} phút"}, 429)
+    try:
+        pw = str((await request.json()).get("password") or "")
+    except ValueError:
+        pw = ""
+    if not hmac.compare_digest(pw.encode("utf-8"), ADMIN_PASSWORD.encode("utf-8")):
+        f[0] += 1
+        if f[0] >= 5:
+            f[:] = [0, time.time() + 300]
+        FAILS[ip] = f
+        await asyncio.sleep(1)
+        return J({"error": "Sai mật khẩu"}, 401)
+    FAILS.pop(ip, None)
+    for k in [k for k, v in SESSIONS.items() if v < time.time()]:
+        SESSIONS.pop(k, None)
+    tok = secrets.token_urlsafe(32)
+    SESSIONS[tok] = time.time() + SESSION_HOURS * 3600
+    r = J({"ok": True})
+    r.set_cookie("g8adm", tok, max_age=SESSION_HOURS * 3600, httponly=True, samesite="strict")
+    return r
+
+
+async def logout(request):
+    SESSIONS.pop(request.cookies.get("g8adm") or "", None)
+    r = J({"ok": True})
+    r.delete_cookie("g8adm")
+    return r
+
+
 def make_app(noti, version, static_dir, extra):
     async def page(request):
         with open(os.path.join(HERE, "admin.html"), encoding="utf-8") as f:
@@ -60,37 +94,6 @@ def make_app(noti, version, static_dir, extra):
         if not re.fullmatch(r"[a-z0-9_-]+\.(png|svg|ico)", name) or not os.path.exists(p):
             return J({"error": "không có file"}, 404)
         return FileResponse(p, headers={"Cache-Control": "public, max-age=86400"})
-
-    async def login(request):
-        ip = request.client.host if request.client else ""
-        f = FAILS.get(ip, [0, 0])
-        if f[1] > time.time():
-            return J({"error": f"Sai mật khẩu quá nhiều lần, thử lại sau {int(f[1] - time.time()) // 60 + 1} phút"}, 429)
-        try:
-            pw = str((await request.json()).get("password") or "")
-        except ValueError:
-            pw = ""
-        if not hmac.compare_digest(pw.encode("utf-8"), ADMIN_PASSWORD.encode("utf-8")):
-            f[0] += 1
-            if f[0] >= 5:
-                f[:] = [0, time.time() + 300]
-            FAILS[ip] = f
-            await asyncio.sleep(1)
-            return J({"error": "Sai mật khẩu"}, 401)
-        FAILS.pop(ip, None)
-        for k in [k for k, v in SESSIONS.items() if v < time.time()]:
-            SESSIONS.pop(k, None)
-        tok = secrets.token_urlsafe(32)
-        SESSIONS[tok] = time.time() + SESSION_HOURS * 3600
-        r = J({"ok": True})
-        r.set_cookie("g8adm", tok, max_age=SESSION_HOURS * 3600, httponly=True, samesite="strict")
-        return r
-
-    async def logout(request):
-        SESSIONS.pop(request.cookies.get("g8adm") or "", None)
-        r = J({"ok": True})
-        r.delete_cookie("g8adm")
-        return r
 
     def state():
         t = noti.tg()
