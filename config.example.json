@@ -1,11 +1,13 @@
 {
-  "_note": "Cổng 5502: RCS đẩy dữ liệu vào (khai trong RCS). Cổng 5503: xem giao diện web. Cổng 5504: trang quản trị (Telegram, có mật khẩu). Khai trong RCS: http://192.168.110.189:5502/ics/alarm , /ics/agv-status , /ics/task-status",
+  "_note": "Cổng 5502: RCS đẩy dữ liệu vào (khai trong RCS). Cổng 5503: xem giao diện web. Cổng 5504: trang quản trị (Telegram, có mật khẩu). Cổng 5505: kéo file trong thư mục share_dir về máy xem. Khai trong RCS: http://192.168.110.189:5502/ics/alarm , /ics/agv-status , /ics/task-status",
   "listen": {
     "host": "0.0.0.0",
     "port_rcs": 5502,
     "port_web": 5503,
-    "port_admin": 5504
+    "port_admin": 5504,
+    "port_share": 5505
   },
+  "share_dir": "share",
   "paths": {
     "alarm": "/ics/alarm",
     "agv": "/ics/agv-status",

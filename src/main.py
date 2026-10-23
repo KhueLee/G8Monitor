@@ -23,6 +23,7 @@ import admin
 import cfg
 import notify
 import rcs_api
+import share
 from version import VERSION
 
 HERE = os.path.dirname(os.path.abspath(__file__))                    # src/
@@ -1306,6 +1307,7 @@ async def rcs_ok(request: Request):
 
 
 rcs_app = Starlette(routes=[Route("/", rcs_ok)] + rcs_routes)       # cổng RCS: chỉ nhận 3 đường dẫn RCS đẩy lên
+share_app = share.make_app(os.path.join(ROOT, CFG.get("share_dir") or "share"), VERSION, STATIC)   # cổng kéo file: tải file trong thư mục share về máy xem
 admin_app = admin.make_app(NOTI, VERSION, STATIC, lambda: {"robots": sorted(ROBOTS), "web_url": CFG.get("public_host", "") + ":" + str(CFG["listen"]["port_web"])})
 
 
@@ -1313,7 +1315,8 @@ async def serve_all():
     host = CFG["listen"]["host"]
     servers = [uvicorn.Server(uvicorn.Config(rcs_app, host=host, port=int(CFG["listen"]["port_rcs"]), log_level="warning")),
                uvicorn.Server(uvicorn.Config(app, host=host, port=int(CFG["listen"]["port_web"]), log_level="warning")),
-               uvicorn.Server(uvicorn.Config(admin_app, host=host, port=int(CFG["listen"].get("port_admin", 5504)), log_level="warning"))]
+               uvicorn.Server(uvicorn.Config(admin_app, host=host, port=int(CFG["listen"].get("port_admin", 5504)), log_level="warning")),
+               uvicorn.Server(uvicorn.Config(share_app, host=host, port=int(CFG["listen"].get("port_share", 5505)), log_level="warning"))]
     await asyncio.gather(*[sv.serve() for sv in servers])
 
 
